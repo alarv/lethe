@@ -96,6 +96,56 @@ Compaction can run in CI and open a pull request, so **your team reviews what th
 learned** before it becomes shared knowledge. Compaction normally runs in-session using
 the model your agent already has; the CI path needs its own key, so it is opt-in.
 
+## Running it
+
+> Capture works. Retrieval is naive keyword matching, and `compact` is not implemented
+> yet — so today this records memories and reads them back, and nothing distils or
+> decays. That is the honest state.
+
+```sh
+git clone https://github.com/alarv/lethe.git && cd lethe
+npm install && npm run build
+```
+
+Point opencode at it — `~/.config/opencode/opencode.json` for every project, or
+`opencode.json` in a repo for just that one:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "lethe": {
+      "type": "local",
+      "command": ["node", "/absolute/path/to/lethe/dist/cli.js", "mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Tools appear as `lethe_recall`, `lethe_note`, `lethe_confirm`, `lethe_correct`,
+`lethe_forget`.
+
+**Then tell your agent when to use them**, or it mostly won't. In `AGENTS.md`:
+
+```md
+Before investigating anything non-trivial, call `lethe_recall` first — it may
+already be known. When you learn something durable (a fix, a gotcha, a decision
+and its reasoning, a dead end worth not repeating), record it with `lethe_note`.
+If a recalled memory turns out to be wrong, fix it with `lethe_correct`.
+```
+
+Inspect the store by hand:
+
+```sh
+lethe where          # where memory is stored
+lethe ls             # everything recorded
+lethe recall "auth"  # search
+```
+
+Memory lands in `.lethe/memory/*.md` — commit it to share with your team, or use
+`scope: "personal"` to keep it in `~/.lethe/`.
+
 ## Local first
 
 Embeddings run on-device by default — a ~23MB model, fetched once, no API key, no
