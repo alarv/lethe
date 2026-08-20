@@ -128,7 +128,7 @@ artifact**. Same relationship as `package.json` → `node_modules`. Delete it an
 own; the database is what makes it fast.
 
 The payoff is that `sleep` produces a **readable diff a team can approve in a PR**. See
-`docs/sleep.md`.
+`docs/compact.md`.
 
 ## Embeddings
 
@@ -231,7 +231,7 @@ which decay then erodes and access reinforces.
         below threshold → cold; capacity pressure → purge
 ```
 
-All maintenance happens off the user's latency path. Detail in `docs/sleep.md`.
+All maintenance happens off the user's latency path. Detail in `docs/compact.md`.
 
 ## Integration
 

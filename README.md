@@ -12,7 +12,7 @@
 <p align="center">
   <a href="docs/brain.md">how memory works</a> ·
   <a href="docs/architecture.md">architecture</a> ·
-  <a href="docs/sleep.md">sleep</a>
+  <a href="docs/compact.md">compaction</a>
 </p>
 
 ---
@@ -40,7 +40,7 @@ tue 14:15  tried resetting the test database, still refused
 tue 14:31  postgres container wasn't running. `docker compose up` fixed it
 ```
 
-Later — on idle, at session end, or nightly in CI — Lethe **sleeps**. It clusters
+Later — on idle, or at session end — Lethe **compacts**. It clusters
 related episodes, works out what was actually invariant across them, writes that down,
 and deletes the rest:
 
@@ -92,8 +92,9 @@ this possible:
 + not the test code.
 ```
 
-A nightly job runs `lethe sleep` and opens a pull request. **Your team reviews what the
-brain learned** before it becomes shared knowledge.
+Compaction can run in CI and open a pull request, so **your team reviews what the brain
+learned** before it becomes shared knowledge. Compaction normally runs in-session using
+the model your agent already has; the CI path needs its own key, so it is opt-in.
 
 ## Local first
 
@@ -108,8 +109,8 @@ contain your source code; that seemed like the right default.
   an honest account of where we break from biology.
 - [`docs/architecture.md`](docs/architecture.md) — the three stores, why text is the
   source of truth, embeddings, salience.
-- [`docs/sleep.md`](docs/sleep.md) — the consolidation pass, and sleep as a pull
-  request.
+- [`docs/compact.md`](docs/compact.md) — the consolidation pass, who runs the model,
+  and compaction as a pull request.
 
 ## The rule
 
@@ -123,7 +124,7 @@ boring and testable on the inside.**
 - [ ] **Prove the thesis.** Eval: retrieval over distilled memory vs. retrieval over
       raw session logs. If distillation doesn't win, stop here.
 - [ ] **Core.** SQLite store, three memory types, decay and eviction from day one.
-- [ ] **Sleep.** The consolidation pass.
+- [ ] **Compaction.** The consolidation pass.
 - [ ] **MCP server.** Works in any harness that speaks MCP.
 - [ ] **Evals.** Publish the numbers.
 - [ ] **Archetypes.** Memory policy as configuration.

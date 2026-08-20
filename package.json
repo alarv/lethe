@@ -35,11 +35,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test",
     "assets": "sh scripts/assets.sh",
-    "eval": "node --experimental-strip-types evals/run.ts"
+    "eval": "node --experimental-strip-types evals/run.ts",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -48,5 +49,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
+  },
+  "bin": {
+    "lethe": "./dist/cli.js"
   }
 }
