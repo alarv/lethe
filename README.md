@@ -1,8 +1,22 @@
-# lethe
+<p align="center">
+  <img src="assets/seahorse.png" alt="" width="360">
+</p>
 
-**A memory harness for coding agents that forgets on purpose.**
+<h1 align="center">lethe</h1>
 
-Named for the river of forgetting.
+<p align="center"><b>A memory harness for coding agents that forgets on purpose.</b></p>
+
+<p align="center">
+  <a href="docs/brain.md">how memory works</a> ·
+  <a href="docs/architecture.md">architecture</a> ·
+  <a href="docs/sleep.md">sleep</a>
+</p>
+
+---
+
+Named for the river of forgetting. The seahorse is the hippocampus — *hippos*, horse;
+*kampos*, sea monster — which is what early anatomists thought the structure looked
+like, and where episodic memory is written before it is either consolidated or lost.
 
 A memory that only grows is a log file. The value of a memory system is not what it
 stores — it is what it refuses to store. Forgetting the incidental is the same

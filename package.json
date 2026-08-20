@@ -38,7 +38,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test",
-    "assets": "'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless --disable-gpu --hide-scrollbars --force-device-scale-factor=2 --window-size=1280,640 --screenshot=assets/social-preview.png assets/social-preview.html",
+    "assets": "sh scripts/assets.sh",
     "eval": "node --experimental-strip-types evals/run.ts"
   },
   "devDependencies": {
