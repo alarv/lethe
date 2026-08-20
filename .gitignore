@@ -1,0 +1,20 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+
+# Derived index. Rebuilt from .lethe/memory/*.md via `lethe index`.
+# The markdown is the source of truth; this is a build artifact.
+.lethe/index.db
+.lethe/index.db-journal
+.lethe/index.db-wal
+.lethe/index.db-shm
+.lethe/models/
+
+# Local research notes, not part of the published project.
+docs/competition.md
+
+.DS_Store
+coverage/
+evals/results/

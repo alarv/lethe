@@ -1,0 +1,41 @@
+{
+  "name": "lethe",
+  "version": "0.0.0",
+  "description": "A memory harness for coding agents that forgets on purpose.",
+  "keywords": [
+    "memory",
+    "agent",
+    "mcp",
+    "llm",
+    "consolidation",
+    "rag"
+  ],
+  "license": "Apache-2.0",
+  "author": "alarv <alarvfm@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alarv/lethe.git"
+  },
+  "homepage": "https://github.com/alarv/lethe#readme",
+  "bugs": {
+    "url": "https://github.com/alarv/lethe/issues"
+  },
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test",
+    "eval": "node --experimental-strip-types evals/run.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
