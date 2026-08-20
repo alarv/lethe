@@ -21,12 +21,15 @@
     "url": "https://github.com/alarv/lethe/issues"
   },
   "type": "module",
-  "private": true,
   "engines": {
     "node": ">=22"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs",
+    "!docs/competition.md",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
