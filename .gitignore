@@ -18,3 +18,6 @@ docs/competition.md
 .DS_Store
 coverage/
 evals/results/
+
+# Chrome renders at 2x; keep the committed PNG but not scratch renders
+assets/*.tmp.png

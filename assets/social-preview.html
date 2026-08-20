@@ -1,0 +1,108 @@
+<!doctype html>
+<!--
+  Social preview for github.com/alarv/lethe — 1280x640.
+  Render:  npm run assets
+  Source of truth for assets/social-preview.png. Edit here, never the PNG.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face { font-family: 'X'; src: local('Inter'), local('Helvetica Neue'); }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1280px; height: 640px; overflow: hidden;
+    background: #0b0d10;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center;
+    position: relative;
+  }
+
+  /* faint river: a single slow current left-to-right, barely visible */
+  body::before {
+    content: ''; position: absolute; inset: 0;
+    background:
+      radial-gradient(900px 300px at 12% 50%, rgba(120,150,190,.10), transparent 70%),
+      radial-gradient(700px 260px at 88% 55%, rgba(214,146,74,.07), transparent 70%);
+  }
+
+  .wrap { display: flex; width: 100%; padding: 0 72px; gap: 64px; align-items: center; position: relative; }
+
+  .left { width: 400px; flex: none; }
+
+  .mark {
+    font-size: 76px; font-weight: 600; letter-spacing: -.035em;
+    color: #f2f4f7; line-height: 1;
+  }
+  .mark .dot { color: #d6924a; }
+
+  .tag {
+    margin-top: 22px; font-size: 21px; line-height: 1.45;
+    color: #9aa4b2; font-weight: 400; letter-spacing: -.01em;
+  }
+  .tag b { color: #d6924a; font-weight: 500; }
+
+  .rule { margin-top: 30px; width: 56px; height: 2px; background: #d6924a; opacity: .8; }
+
+  .meta {
+    margin-top: 26px; font-size: 14px; letter-spacing: .04em;
+    color: #5c6672; font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+
+  /* the diff — the actual product */
+  .card {
+    flex: 1;
+    background: #12151a;
+    border: 1px solid #1f242c;
+    border-radius: 12px;
+    padding: 26px 30px;
+    font-family: ui-monospace, 'SF Mono', Menlo, Monaco, monospace;
+    font-size: 15.5px; line-height: 1.75;
+    box-shadow: 0 24px 70px rgba(0,0,0,.55);
+  }
+
+  .card .hdr {
+    font-size: 12.5px; color: #5c6672; letter-spacing: .06em;
+    margin-bottom: 16px; display: flex; justify-content: space-between;
+  }
+  .card .hdr .r { color: #4a525c; }
+
+  .l { white-space: pre; }
+  .del { color: #7d5a5f; }
+  .add { color: #7fb08a; }
+  .add.hi { color: #a9dcb5; }
+  .ctx { color: #3d444d; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="left">
+      <div class="mark">lethe<span class="dot">.</span></div>
+      <div class="tag">A memory harness for coding agents that <b>forgets on purpose</b>.</div>
+      <div class="rule"></div>
+      <div class="meta">$ lethe sleep</div>
+    </div>
+
+    <div class="card">
+      <div class="hdr">
+        <span>.lethe/memory/auth.md</span>
+        <span class="r">−7 +3</span>
+      </div>
+<div class="l del">- ## auth test flaky in CI</div>
+<div class="l del">- Spent 40min. Token expiring mid-run.</div>
+<div class="l del">-</div>
+<div class="l del">- ## auth test failed again</div>
+<div class="l del">- Clock skew? CI box is ahead.</div>
+<div class="l del">-</div>
+<div class="l del">- ## froze clock in test setup, green</div>
+<div class="l ctx"> </div>
+<div class="l add hi">+ ## Auth tests are clock-sensitive</div>
+<div class="l add">+ Freeze the clock in test setup. CI</div>
+<div class="l add">+ failures here are skew, not logic.</div>
+    </div>
+  </div>
+</body>
+</html>
