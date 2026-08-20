@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
-if [ ! -f assets/seahorse.png ]; then
-  echo "error: assets/seahorse.png missing (needs the DARK-background artwork)" >&2
+if [ ! -f assets/dark-seahorse.jpeg ]; then
+  echo "error: assets/dark-seahorse.jpeg missing (needs the DARK-background artwork)" >&2
   exit 1
 fi
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"

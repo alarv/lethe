@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/seahorse.png" alt="" width="360">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/dark-seahorse.jpeg">
+    <img src="assets/seahorse.jpeg" alt="" width="420">
+  </picture>
 </p>
 
 <h1 align="center">lethe</h1>
@@ -26,22 +29,36 @@ operation as extracting the general rule.
 
 ## The idea
 
-Your agent writes down what happened. Later, while you are not waiting on it, Lethe
-**sleeps**: it clusters related episodes, distils what was invariant across them into a
-durable claim, and throws the raw material away.
+Your agent solved this on Tuesday. On Thursday, in a new session, it has no idea.
+
+During a session Lethe records what happened, cheaply and without judgement:
 
 ```
-"spent 40min on failing auth test, token was expiring"
-"auth test flaky again, clock skew in CI"                 ──sleep──►
-"fixed CI auth flake by freezing the clock in test setup"
-
-    "Auth tests are clock-sensitive; freeze the clock in test setup.
-     CI failures here are usually skew, not logic."
+tue 14:02  tests failed — 14 errors, all "connection refused"
+tue 14:09  checked the test DB config, looked fine
+tue 14:15  tried resetting the test database, still refused
+tue 14:31  postgres container wasn't running. `docker compose up` fixed it
 ```
 
-Three episodes in, one claim out, and the episodes are gone. Unused claims decay.
-Claims that get used get stronger. Claims that turn out to be wrong get corrected in
-place, because retrieval hands the agent an id and the tools to revise it.
+Later — on idle, at session end, or nightly in CI — Lethe **sleeps**. It clusters
+related episodes, works out what was actually invariant across them, writes that down,
+and deletes the rest:
+
+```
+.lethe/memory/testing.md
+
+  Tests need `docker compose up` first.
+  "Connection refused" is almost always the missing container,
+  not the test code.
+```
+
+Four episodes in, one rule out, and the episodes are gone. On Thursday the agent reads
+one line instead of rediscovering it over twenty-nine minutes — and *you* never see any
+of this, because it happened while you weren't waiting.
+
+Rules that keep proving useful get stronger. Rules nobody touches decay and eventually
+fall out. Rules that turn out to be wrong get corrected in place, because retrieval
+hands the agent an id along with the memory.
 
 ## Three things this does that memory tools generally don't
 
@@ -64,12 +81,15 @@ The markdown is the source of truth; SQLite is a build artifact. That is what ma
 this possible:
 
 ```diff
-- ## auth test flaky in CI
-- Spent 40min. Token expiring mid-run. Third time this month.
+  # .lethe/memory/testing.md
+
+- ## tests failed, connection refused
+- Checked DB config, looked fine. Reset the test database, still refused.
+- Turned out the postgres container wasn't running.
 -
-+ ## Auth tests are clock-sensitive
-+ Freeze the clock in test setup. CI failures in auth tests are usually
-+ skew rather than logic.
++ ## Tests need `docker compose up` first
++ "Connection refused" is almost always the missing container,
++ not the test code.
 ```
 
 A nightly job runs `lethe sleep` and opens a pull request. **Your team reviews what the
