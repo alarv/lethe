@@ -1,5 +1,5 @@
 {
-  "name": "lethe",
+  "name": "@alarv/lethe",
   "version": "0.0.0",
   "description": "A memory harness for coding agents that forgets on purpose.",
   "keywords": [
@@ -19,6 +19,9 @@
   "homepage": "https://github.com/alarv/lethe#readme",
   "bugs": {
     "url": "https://github.com/alarv/lethe/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "type": "module",
   "engines": {
