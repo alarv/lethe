@@ -83,17 +83,48 @@ lethe compact --extractive   # no model call; cluster and pick, do not rewrite
 lethe sleep                  # alias for `lethe compact`
 ```
 
-## Triggers
+## When it runs
 
-| Trigger | When | Default |
+A nightly cron was the obvious answer and it is the wrong one: it needs a key in CI,
+which contradicts local-first, and it fires whether or not there is anything to do.
+
+**Compaction triggers on pressure, not on a clock.** When the episodic buffer crosses a
+threshold, the next tool call runs it. This is how LSM compaction already works — you do
+not compact a database at 3am, you compact it when level 0 has too many files.
+
+It is also what the biology does. Sleep is not scheduled; **sleep pressure accumulates
+while you are awake** (adenosine builds, the homeostatic Process S rises) and discharges
+when it gets high enough. A long day means earlier, deeper sleep. A long session means
+earlier, heavier compaction.
+
+```
+episode written ──► pressure += salience
+                         │
+                    pressure > threshold?
+                         │ yes
+                         ▼
+              next tool call runs compaction
+              (the session is live, so the
+               host's model is reachable)
+```
+
+| Trigger | Fires when | Default |
 |---|---|---|
+| **Pressure** | Episodic buffer crosses the threshold | on |
+| Idle | No tool call for *n* minutes and pressure is non-zero | on |
+| Session end | The transport closes | best effort |
 | Manual | `lethe compact` | — |
-| Session end | The harness signals a session closed | on |
-| Idle | No activity for `n` minutes | on |
-| Scheduled | Cron / CI maintenance window | opt-in |
+| Scheduled | Cron or CI | opt-in, needs a key |
 
-Never on the user's latency path. Consolidation is allowed to be slow, exactly as sleep
-is allowed to take hours.
+Pressure is the primary trigger. Idle is the mop-up for sessions that write a lot and
+then go quiet. Session end is best-effort only — the connection is closing, so there may
+be no model to reach; anything not compacted stays in the buffer and is picked up by the
+next session, which is the correct failure mode.
+
+**This resolves the token problem.** Compaction happens inside a live session, so it
+uses the model the user is already talking to, via MCP sampling. No key, no cron, no
+extra cost, and no configuration. The scheduled path remains for teams that want a
+reviewable nightly PR, but it is an option rather than the mechanism.
 
 ## Who actually runs the model
 
