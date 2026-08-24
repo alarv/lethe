@@ -11,6 +11,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { Store, type Memory } from "./store.js";
+import { compact, type Distiller } from "./compact.js";
 
 const scopeSchema = z.enum(["local", "team", "personal"]).default("local")
   .describe(
@@ -27,9 +28,47 @@ function render(m: Memory): string {
   ].filter(Boolean).join("\n");
 }
 
+/**
+ * Compaction fires on pressure, not on a clock (docs/compact.md § When it runs).
+ * Sleep pressure builds while awake and discharges once it is high enough; here
+ * the episodic buffer plays the same role. Running inside a live session is what
+ * lets us borrow the host's model, so there is no key and no cron.
+ */
+const PRESSURE_THRESHOLD = 12;
+
 export function createServer(cwd = process.cwd()): McpServer {
   const store = new Store(cwd);
   const server = new McpServer({ name: "lethe", version: "0.0.1" });
+
+  /** Sampling if the host offers it; otherwise compaction degrades to extractive. */
+  function distiller(): Distiller | undefined {
+    const caps = server.server.getClientCapabilities();
+    if (!caps?.sampling) return undefined;
+    return async (prompt: string) => {
+      const res = await server.server.createMessage({
+        messages: [{ role: "user", content: { type: "text", text: prompt } }],
+        maxTokens: 400,
+      });
+      return res.content.type === "text" ? res.content.text : "";
+    };
+  }
+
+  let compacting = false;
+  async function relievePressure(): Promise<string | null> {
+    if (compacting) return null;
+    const episodes = store.all().filter((m) => m.kind === "episode" && !m.supersededBy);
+    if (episodes.length < PRESSURE_THRESHOLD) return null;
+    compacting = true;
+    try {
+      const r = await compact(store, { distil: distiller() });
+      if (!r.claimsWritten) return null;
+      return `compacted ${r.episodesConsumed} episodes into ${r.claimsWritten} claim(s)`;
+    } catch {
+      return null; // never fail a user-facing call because maintenance failed
+    } finally {
+      compacting = false;
+    }
+  }
 
   server.tool(
     "lethe_recall",
@@ -71,7 +110,13 @@ export function createServer(cwd = process.cwd()): McpServer {
     },
     async (args) => {
       const m = store.create(args);
-      return { content: [{ type: "text", text: `recorded [${m.id.slice(0, 8)}] ${m.title}` }] };
+      const note = await relievePressure();
+      return {
+        content: [{
+          type: "text",
+          text: `recorded [${m.id.slice(0, 8)}] ${m.title}${note ? `\n${note}` : ""}`,
+        }],
+      };
     },
   );
 

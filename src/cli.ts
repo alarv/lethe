@@ -8,6 +8,7 @@
 
 import { Store, findProjectRoot, memoryDir, type Scope } from "./store.js";
 import { serve } from "./server.js";
+import { compact, formatReport } from "./compact.js";
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
 
@@ -17,7 +18,7 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe note <title> [body]    record a memory by hand
   lethe forget <id>            delete a memory
   lethe where                  show where memory is stored
-  lethe compact [--dry-run]    consolidate and decay        (not implemented yet)
+  lethe compact [--dry-run]    consolidate, promote, decay
 
   scopes:
     local     this repo, private to you, in ~/.lethe   (default)
@@ -68,6 +69,9 @@ async function main(): Promise<void> {
     }
 
     case "recall": {
+      // Deliberately does not reinforce. This is you inspecting the store by
+      // hand; counting it as use would inflate the very signal decay and
+      // promotion are meant to measure. Only agent recall, via MCP, reinforces.
       const hits = store.search(rest.filter((a) => !a.startsWith("--")).join(" "));
       if (!hits.length) {
         console.log("nothing matched");
@@ -102,16 +106,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    case "compact":
-      console.error(
-        "not implemented.\n\n" +
-          "Compaction is the point of the project and is deliberately not stubbed:\n" +
-          "an implementation that silently does nothing is worse than one that says so.\n" +
-          "Capture first, then evaluate whether distillation beats raw logs.\n" +
-          "See docs/compact.md.",
-      );
-      process.exit(1);
+    case "compact": {
+      const r = await compact(store, {
+        dryRun: rest.includes("--dry-run"),
+        deep: rest.includes("--deep"),
+      });
+      console.log(formatReport(r));
+      if (rest.includes("--dry-run")) console.log("\n  (dry run -- nothing was written)");
       return;
+    }
 
     default:
       console.log(USAGE);
