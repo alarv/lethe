@@ -140,7 +140,12 @@ export function createServer(cwd = process.cwd()): McpServer {
     { id: z.string() },
     async ({ id }) => {
       const m = store.get(id);
-      if (!m) return { content: [{ type: "text", text: `no memory ${id}` }], isError: true };
+      if (!m) {
+        return {
+          content: [{ type: "text", text: `no memory ${id} — it may have been compacted; recall again for current ids` }],
+          isError: true,
+        };
+      }
       store.touch(m, 0.4);
       log("confirm", m.title, { id: m.id.slice(0, 8), strength: m.strength.toFixed(2) });
       return { content: [{ type: "text", text: `confirmed [${m.id.slice(0, 8)}]` }] };
@@ -158,7 +163,12 @@ export function createServer(cwd = process.cwd()): McpServer {
     },
     async ({ id, title, body }) => {
       const old = store.get(id);
-      if (!old) return { content: [{ type: "text", text: `no memory ${id}` }], isError: true };
+      if (!old) {
+        return {
+          content: [{ type: "text", text: `no memory ${id} — it may have been compacted; recall again for current ids` }],
+          isError: true,
+        };
+      }
       const next = store.create({
         title,
         body,
@@ -188,7 +198,10 @@ export function createServer(cwd = process.cwd()): McpServer {
       "for anything merely outdated, prefer the correct tool.",
     { id: z.string() },
     async ({ id }) => ({
-      content: [{ type: "text", text: store.remove(id) ? `forgot ${id}` : `no memory ${id}` }],
+      content: [{
+        type: "text",
+        text: store.remove(id) ? `forgot ${id}` : `no memory ${id} — recall again for current ids`,
+      }],
     }),
   );
 

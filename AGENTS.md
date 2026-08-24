@@ -17,10 +17,22 @@ case, and delete before adding.
 A developer decides whether to keep this in the few seconds they spend reading the tool
 list. That is the whole budget. Spend it on clarity, not features.
 
+## Never test against the real store
+
+Set `LETHE_HOME` to a temp directory for anything that writes or deletes:
+
+```sh
+T=$(mktemp -d); LETHE_HOME=$T lethe note "..." ; rm -rf "$T"
+```
+
+**Do not run `rm -rf ~/.lethe`.** That is somebody's memory, and during development it
+is probably being used for real in another window. This has already destroyed live data
+twice.
+
 ## Before claiming anything works
 
 - `npm run build` must pass.
-- Run the thing. `node dist/cli.js where`, write a memory, read it back.
+- Run the thing. `lethe where`, write a memory, read it back — under `LETHE_HOME`.
 - If it touches storage, verify two different repos do not see each other's memories,
   and that nothing appears in `git status`.
 

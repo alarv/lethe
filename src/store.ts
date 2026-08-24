@@ -82,8 +82,19 @@ function projectKey(root: string): string {
   return `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${hash}`;
 }
 
+/**
+ * Root for all stored memory.
+ *
+ * LETHE_HOME exists so tests never touch a real store. Without it, a test that
+ * cleans up after itself deletes whatever the user was actually relying on --
+ * which is not hypothetical: it happened twice during development.
+ */
+export function letheHome(): string {
+  return process.env.LETHE_HOME || join(homedir(), ".lethe");
+}
+
 export function memoryDir(scope: Scope, cwd = process.cwd()): string {
-  const home = join(homedir(), ".lethe");
+  const home = letheHome();
   if (scope === "personal") return join(home, "memory");
 
   const root = findProjectRoot(cwd);
@@ -197,8 +208,20 @@ export class Store {
     return [...this.list("local"), ...this.list("team"), ...this.list("personal")];
   }
 
+  /**
+   * Resolve an id, following it forward if the memory no longer exists.
+   *
+   * Two things legitimately move an id: compaction consumes episodes into a
+   * claim, and `correct` supersedes a memory. In both cases the agent may still
+   * be holding the old id, so fall back to whichever memory cites it in
+   * `provenance` -- that is what provenance is for. Without this, acting on a
+   * recalled memory fails for reasons the agent cannot see or fix.
+   */
   get(id: string): Memory | null {
-    return this.all().find((m) => m.id === id || m.id.startsWith(id)) ?? null;
+    const all = this.all();
+    const direct = all.find((m) => m.id === id || m.id.startsWith(id));
+    if (direct) return direct;
+    return all.find((m) => m.provenance.some((p) => p === id || p.startsWith(id))) ?? null;
   }
 
   write(m: Memory): Memory {

@@ -15,7 +15,12 @@ import { appendFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-export const LOG_PATH = join(homedir(), ".lethe", "lethe.log");
+/** Mirrors store.letheHome(); kept here to avoid a cycle. */
+function home(): string {
+  return process.env.LETHE_HOME || join(homedir(), ".lethe");
+}
+
+export const LOG_PATH = join(home(), "lethe.log");
 
 export type Event =
   | "start"
@@ -28,6 +33,10 @@ export type Event =
   | "sampling"
   | "error";
 
+function logPath(): string {
+  return join(home(), "lethe.log");
+}
+
 export function log(event: Event, detail: string, extra?: Record<string, unknown>): void {
   const parts = [new Date().toISOString(), event.padEnd(8), detail];
   if (extra && Object.keys(extra).length) {
@@ -36,8 +45,9 @@ export function log(event: Event, detail: string, extra?: Record<string, unknown
   const line = parts.join("  ") + "\n";
 
   try {
-    mkdirSync(dirname(LOG_PATH), { recursive: true });
-    appendFileSync(LOG_PATH, line, "utf8");
+    const p = logPath();
+    mkdirSync(dirname(p), { recursive: true });
+    appendFileSync(p, line, "utf8");
   } catch {
     // Logging must never break the caller.
   }
@@ -45,6 +55,7 @@ export function log(event: Event, detail: string, extra?: Record<string, unknown
 }
 
 export function tail(n = 40): string[] {
-  if (!existsSync(LOG_PATH)) return [];
-  return readFileSync(LOG_PATH, "utf8").split("\n").filter(Boolean).slice(-n);
+  const p = logPath();
+  if (!existsSync(p)) return [];
+  return readFileSync(p, "utf8").split("\n").filter(Boolean).slice(-n);
 }
