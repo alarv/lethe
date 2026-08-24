@@ -54,7 +54,8 @@ async function main(): Promise<void> {
 
       console.log(`memories   ${all.length}  (${episodes} episode, ${by("claim")} claim, ${by("pattern")} pattern)`);
       console.log(`pressure   ${episodes}/12 ${episodes >= 12 ? "— compaction due" : ""}`);
-      console.log(`store      ${memoryDir("local")}`);
+      const root = findProjectRoot();
+      console.log(`store      ${root ? memoryDir("local") : "(not in a git repo — local scope unavailable)"}`);
       console.log(`log        ${LOG_PATH}`);
       console.log("");
       if (!lines.length) {

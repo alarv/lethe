@@ -110,6 +110,7 @@ the model your agent already has; the CI path needs its own key, so it is opt-in
 ```sh
 git clone https://github.com/alarv/lethe.git && cd lethe
 npm install && npm run build
+npm link          # puts `lethe` on your PATH
 ```
 
 Point opencode at it — `~/.config/opencode/opencode.json` for every project, or
@@ -155,6 +156,9 @@ other so a single rules file serves both.
 lethe status         # counts, pressure, and when each tool last fired
 lethe log -n 40      # recent activity
 ```
+
+Run these from anywhere — the log is global. `status` also reports the store for
+whichever repo you are currently in, so run it there to see that repo's memories.
 
 `status` is the one to check after a session. If it says no activity, the agent never
 called the tools — usually because the harness did not start the server, or because
