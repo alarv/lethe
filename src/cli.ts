@@ -6,7 +6,7 @@
  * inspecting the store by hand while dogfooding.
  */
 
-import { Store, findProjectRoot, isHidden, memoryDir, type Scope } from "./store.js";
+import { Store, findProjectRoot, memoryDir, type Scope } from "./store.js";
 import { serve } from "./server.js";
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
@@ -19,7 +19,11 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe where                  show where memory is stored
   lethe compact [--dry-run]    consolidate and decay        (not implemented yet)
 
-  scopes: project (shared via the repo) | personal (yours only)
+  scopes:
+    local     this repo, private to you, in ~/.lethe   (default)
+    team      committed to the repo, shared
+    personal  you, across every repo
+
 `;
 
 function flag(args: string[], name: string): string | undefined {
@@ -30,7 +34,7 @@ function flag(args: string[], name: string): string | undefined {
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const store = new Store();
-  const scope = (flag(rest, "scope") ?? "project") as Scope;
+  const scope = (flag(rest, "scope") ?? "local") as Scope;
 
   switch (cmd) {
     case "mcp":
@@ -39,17 +43,17 @@ async function main(): Promise<void> {
 
     case "where": {
       const root = findProjectRoot();
-      console.log(`hidden mode  : ${isHidden() ? "ON — nothing is written into the repo" : "off"}`);
-      console.log(`project root : ${root ?? "(not in a git repo)"}`);
-      if (root) console.log(`project      : ${memoryDir("project")}`);
-      console.log(`personal     : ${memoryDir("personal")}`);
+      console.log(`repo      ${root ?? "(not in a git repo)"}`);
+      if (root) {
+        console.log(`local     ${memoryDir("local")}`);
+        console.log(`team      ${memoryDir("team")}`);
+      }
+      console.log(`personal  ${memoryDir("personal")}`);
       return;
     }
 
     case "ls": {
-      const all = scope === "project" || scope === "personal"
-        ? store.list(scope)
-        : store.all();
+      const all = rest.some((a) => a.startsWith("--scope=")) ? store.list(scope) : store.all();
       if (!all.length) {
         console.log("no memories yet");
         return;

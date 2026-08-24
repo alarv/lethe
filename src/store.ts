@@ -22,7 +22,17 @@ import {
   writeFileSync,
 } from "node:fs";
 
-export type Scope = "project" | "personal";
+/**
+ * Where a memory lives.
+ *
+ *   local     ~/.lethe/projects/<repo>/  — this repo, private to you. The default.
+ *   team      <repo>/.lethe/memory/      — committed, shared, reviewed in PRs.
+ *   personal  ~/.lethe/memory/           — you, across every repo.
+ *
+ * `local` is the default because writing into someone's repo is a decision they
+ * should opt into, not discover in `git status`.
+ */
+export type Scope = "local" | "team" | "personal";
 
 /** Episodic = what happened. Semantic = what is true. Procedural = how we do things. */
 export type Kind = "episode" | "claim" | "pattern";
@@ -62,22 +72,6 @@ export function findProjectRoot(start = process.cwd()): string | null {
   }
 }
 
-/**
- * Hidden mode: keep project memory per-project, but store it outside the repo.
- *
- * For dogfooding, or any case where memory should not be visible to the team.
- * This is deliberately not solved with .gitignore: that relies on remembering,
- * in every repo, forever, and a `.lethe/` line in a shared ignore file is itself
- * a disclosure. If nothing is written into the repo there is nothing to leak.
- *
- * Memory stays keyed to the repo, so recall in one project does not surface
- * notes from another.
- */
-export function isHidden(): boolean {
-  const v = process.env.LETHE_HIDDEN;
-  return v === "1" || v === "true";
-}
-
 /** Stable per-repo directory name: readable, with a hash to avoid collisions. */
 function projectKey(root: string): string {
   const hash = createHash("sha256").update(root).digest("hex").slice(0, 8);
@@ -86,13 +80,13 @@ function projectKey(root: string): string {
 }
 
 export function memoryDir(scope: Scope, cwd = process.cwd()): string {
-  if (scope === "personal") return join(homedir(), ".lethe", "memory");
+  const home = join(homedir(), ".lethe");
+  if (scope === "personal") return join(home, "memory");
+
   const root = findProjectRoot(cwd);
-  if (!root) throw new Error("not inside a git repository (needed for project scope)");
-  if (isHidden()) {
-    return join(homedir(), ".lethe", "projects", projectKey(root), "memory");
-  }
-  return join(root, ".lethe", "memory");
+  if (!root) throw new Error("not inside a git repository");
+  if (scope === "team") return join(root, ".lethe", "memory");
+  return join(home, "projects", projectKey(root), "memory");
 }
 
 // ---------------------------------------------------------- serialisation
@@ -183,7 +177,7 @@ export class Store {
     try {
       dir = this.dir(scope);
     } catch {
-      return []; // project scope outside a repo: not an error, just empty
+      return []; // outside a repo: not an error, just empty
     }
     const out: Memory[] = [];
     for (const name of readdirSync(dir)) {
@@ -195,7 +189,7 @@ export class Store {
   }
 
   all(): Memory[] {
-    return [...this.list("project"), ...this.list("personal")];
+    return [...this.list("local"), ...this.list("team"), ...this.list("personal")];
   }
 
   get(id: string): Memory | null {
@@ -228,7 +222,7 @@ export class Store {
     return this.write({
       id: randomUUID(),
       kind: input.kind ?? "episode",
-      scope: input.scope ?? "project",
+      scope: input.scope ?? "local",
       title: input.title,
       body: input.body,
       tags: input.tags ?? [],

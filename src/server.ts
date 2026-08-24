@@ -12,8 +12,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Store, type Memory } from "./store.js";
 
-const scopeSchema = z.enum(["project", "personal"]).default("project")
-  .describe("project = shared with the team via the repo; personal = yours only");
+const scopeSchema = z.enum(["local", "team", "personal"]).default("local")
+  .describe(
+    "local = this repo, private to you (default) | " +
+    "team = committed to the repo and shared | " +
+    "personal = you, across every repo",
+  );
 
 function render(m: Memory): string {
   const age = m.kind === "claim" ? "claim" : m.kind === "pattern" ? "pattern" : "episode";
