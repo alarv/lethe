@@ -25,7 +25,9 @@ A memory that only grows is a log file. The value of a memory system is not what
 stores — it is what it refuses to store. Forgetting the incidental is the same
 operation as extracting the general rule.
 
-> **Status: design phase.** Nothing works yet. The thinking is in [`docs/`](docs/).
+> **Status: early.** Capture, recall and compaction work. Retrieval is keyword
+> matching, not embeddings, and none of it is measured yet — see
+> [`docs/evals.md`](docs/evals.md).
 
 ## The idea
 
@@ -101,9 +103,9 @@ the model your agent already has; the CI path needs its own key, so it is opt-in
 
 ## Running it
 
-> Capture works. Retrieval is naive keyword matching, and `compact` is not implemented
-> yet — so today this records memories and reads them back, and nothing distils or
-> decays. That is the honest state.
+> Works today: recording, recall, and compaction (consolidate, promote, decay).
+> Retrieval is keyword matching rather than embeddings, so recall misses things
+> phrased differently. Nothing is measured yet.
 
 ```sh
 git clone https://github.com/alarv/lethe.git && cd lethe
@@ -188,9 +190,10 @@ boring and testable on the inside.**
 
 - [ ] **Prove the thesis.** Eval: retrieval over distilled memory vs. retrieval over
       raw session logs. If distillation doesn't win, stop here.
-- [ ] **Core.** SQLite store, three memory types, decay and eviction from day one.
-- [ ] **Compaction.** The consolidation pass.
-- [ ] **MCP server.** Works in any harness that speaks MCP.
+- [x] **Core.** Three memory types, decay and eviction.
+- [x] **Compaction.** Consolidate, promote, decay — triggered by pressure.
+- [x] **MCP server.** Works in any harness that speaks MCP.
+- [ ] **Embeddings.** Replace keyword retrieval.
 - [ ] **Evals.** Publish the numbers.
 - [ ] **Archetypes.** Memory policy as configuration.
 
