@@ -72,10 +72,13 @@ hands the agent an id along with the memory.
 ## Memory lives in your repo, as text
 
 ```
-<repo>/.lethe/memory/*.md    ← team memory. committed, diffable, reviewed in PRs.
-~/.lethe/memory/*.md         ← personal memory. never shared.
-        .lethe/index.db      ← derived vector index. gitignored, rebuildable.
+~/.lethe/projects/<repo>/    local    this repo, private to you   (default)
+<repo>/.lethe/memory/        team     committed, reviewed in PRs
+~/.lethe/memory/             personal you, across every repo
 ```
+
+Nothing is written into your repository unless you ask for it. Writing to someone's
+working tree is a decision they opt into, not something they find in `git status`.
 
 The markdown is the source of truth; SQLite is a build artifact. That is what makes
 this possible:
@@ -138,28 +141,11 @@ If a recalled memory turns out to be wrong, fix it with `lethe_correct`.
 For **Claude Code**:
 
 ```sh
-claude mcp add lethe --scope user --env LETHE_HIDDEN=1 \
-  -- node /absolute/path/to/lethe/dist/cli.js mcp
+claude mcp add lethe --scope user -- node /absolute/path/to/lethe/dist/cli.js mcp
 ```
 
 Claude Code reads `~/.claude/CLAUDE.md` rather than `AGENTS.md`; symlink one to the
 other so a single rules file serves both.
-
-### Hidden mode
-
-`LETHE_HIDDEN=1` keeps project memory *per-project* but stores it outside the repo:
-
-```
-~/.lethe/memory/                          personal scope — one pool, all projects
-~/.lethe/projects/<repo>-<hash>/memory/   project scope, relocated out of the repo
-```
-
-Use it to try Lethe on work repos without anything appearing in `git status`. This is
-deliberately not a `.gitignore` line: ignoring relies on remembering, in every repo,
-forever, and one `git add -f` puts private notes in a team PR. If nothing is written
-into the repo, there is nothing to leak.
-
-Check which mode you are in with `lethe where`.
 
 Inspect the store by hand:
 
@@ -185,8 +171,11 @@ contain your source code; that seemed like the right default.
   an honest account of where we break from biology.
 - [`docs/architecture.md`](docs/architecture.md) — the three stores, why text is the
   source of truth, embeddings, salience.
-- [`docs/compact.md`](docs/compact.md) — the consolidation pass, who runs the model,
-  and compaction as a pull request.
+- [`docs/compact.md`](docs/compact.md) — the consolidation pass, when it runs, and who
+  provides the model.
+- [`docs/evals.md`](docs/evals.md) — how we intend to prove any of this works, written
+  before there was anything to measure.
+- [`docs/api-design.md`](docs/api-design.md) — the rules the tool surface is held to.
 
 ## The rule
 
