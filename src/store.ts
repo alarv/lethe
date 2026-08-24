@@ -49,6 +49,9 @@ export interface Memory {
   salience: number;
   /** Erodes on decay, reinforced on access. */
   strength: number;
+  /** When decay was last applied. Decay measures elapsed time since this, not
+   *  since `updated`, so running compaction twice does not decay twice. */
+  decayedAt: string;
   accessCount: number;
   created: string;
   updated: string;
@@ -109,6 +112,7 @@ export function serialize(m: Memory): string {
     `files: ${m.files.join(", ")}`,
     `salience: ${m.salience}`,
     `strength: ${m.strength}`,
+    `decayedAt: ${m.decayedAt}`,
     `accessCount: ${m.accessCount}`,
     `created: ${m.created}`,
     `updated: ${m.updated}`,
@@ -143,6 +147,7 @@ export function parse(text: string, scope: Scope): Memory | null {
     files: list(f.files),
     salience: Number(f.salience ?? 0.5),
     strength: Number(f.strength ?? 1),
+    decayedAt: f.decayedAt || f.created || new Date().toISOString(),
     accessCount: Number(f.accessCount ?? 0),
     created: f.created ?? new Date().toISOString(),
     updated: f.updated ?? new Date().toISOString(),
@@ -229,6 +234,7 @@ export class Store {
       files: input.files ?? [],
       salience: input.salience ?? 0.5,
       strength: 1,
+      decayedAt: now,
       accessCount: 0,
       created: now,
       updated: now,
