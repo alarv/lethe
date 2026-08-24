@@ -12,7 +12,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Store, type Memory } from "./store.js";
 import { compact, type Distiller } from "./compact.js";
-import { log } from "./log.js";
+import { buildStamp, log } from "./log.js";
 
 const scopeSchema = z.enum(["local", "team", "personal"]).default("local")
   .describe(
@@ -211,5 +211,5 @@ export function createServer(cwd = process.cwd()): McpServer {
 export async function serve(): Promise<void> {
   const server = createServer();
   await server.connect(new StdioServerTransport());
-  log("start", "mcp server connected", { cwd: process.cwd() });
+  log("start", "mcp server connected", { cwd: process.cwd(), build: buildStamp() });
 }

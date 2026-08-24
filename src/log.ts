@@ -11,9 +11,25 @@
  * stays empty with no indication why.
  */
 
-import { appendFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Build stamp of the running code.
+ *
+ * MCP servers are long-lived child processes: a rebuild does not reach one that
+ * is already running, so a harness can keep serving code from hours earlier with
+ * no outward sign. Logging this at startup lets `lethe status` say so.
+ */
+export function buildStamp(): string {
+  try {
+    return statSync(fileURLToPath(import.meta.url)).mtime.toISOString();
+  } catch {
+    return "unknown";
+  }
+}
 
 /** Mirrors store.letheHome(); kept here to avoid a cycle. */
 function home(): string {

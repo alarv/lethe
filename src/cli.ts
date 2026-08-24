@@ -9,7 +9,7 @@
 import { Store, findProjectRoot, memoryDir, type Scope } from "./store.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
-import { LOG_PATH, tail } from "./log.js";
+import { LOG_PATH, buildStamp, tail } from "./log.js";
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
 
@@ -64,6 +64,15 @@ async function main(): Promise<void> {
         console.log("or the agent was never told to call the tools. Check `lethe log`");
         console.log("after a session, and that your AGENTS.md/CLAUDE.md mentions lethe.");
         return;
+      }
+      const lastStart = last("start");
+      if (lastStart) {
+        const m = /build=(\S+)/.exec(lastStart);
+        if (m && m[1] !== buildStamp()) {
+          console.log(`WARNING  the running server is older than the built code.`);
+          console.log(`         restart your harness, or it keeps using the old version.`);
+          console.log("");
+        }
       }
       for (const [label, ev] of [["server start", "start"], ["last recall", "recall"], ["last note", "note"], ["last compact", "compact"]] as const) {
         const l = last(ev);

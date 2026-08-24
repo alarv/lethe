@@ -158,6 +158,11 @@ lethe status         # counts, pressure, and when each tool last fired
 lethe log -n 40      # recent activity
 ```
 
+MCP servers are long-lived child processes, so **a rebuild does not reach a server that
+is already running** — the harness keeps using the version it started with. After
+changing Lethe, restart opencode or Claude Code. `lethe status` warns when the running
+server is older than the built code.
+
 Run these from anywhere — the log is global. `status` also reports the store for
 whichever repo you are currently in, so run it there to see that repo's memories.
 
