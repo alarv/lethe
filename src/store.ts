@@ -10,7 +10,7 @@
  * not the design -- see docs/architecture.md § Embeddings.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -62,10 +62,36 @@ export function findProjectRoot(start = process.cwd()): string | null {
   }
 }
 
+/**
+ * Hidden mode: keep project memory per-project, but store it outside the repo.
+ *
+ * For dogfooding, or any case where memory should not be visible to the team.
+ * This is deliberately not solved with .gitignore: that relies on remembering,
+ * in every repo, forever, and a `.lethe/` line in a shared ignore file is itself
+ * a disclosure. If nothing is written into the repo there is nothing to leak.
+ *
+ * Memory stays keyed to the repo, so recall in one project does not surface
+ * notes from another.
+ */
+export function isHidden(): boolean {
+  const v = process.env.LETHE_HIDDEN;
+  return v === "1" || v === "true";
+}
+
+/** Stable per-repo directory name: readable, with a hash to avoid collisions. */
+function projectKey(root: string): string {
+  const hash = createHash("sha256").update(root).digest("hex").slice(0, 8);
+  const name = root.split("/").filter(Boolean).pop() ?? "project";
+  return `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${hash}`;
+}
+
 export function memoryDir(scope: Scope, cwd = process.cwd()): string {
   if (scope === "personal") return join(homedir(), ".lethe", "memory");
   const root = findProjectRoot(cwd);
   if (!root) throw new Error("not inside a git repository (needed for project scope)");
+  if (isHidden()) {
+    return join(homedir(), ".lethe", "projects", projectKey(root), "memory");
+  }
   return join(root, ".lethe", "memory");
 }
 

@@ -6,7 +6,7 @@
  * inspecting the store by hand while dogfooding.
  */
 
-import { Store, findProjectRoot, memoryDir, type Scope } from "./store.js";
+import { Store, findProjectRoot, isHidden, memoryDir, type Scope } from "./store.js";
 import { serve } from "./server.js";
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
@@ -39,6 +39,7 @@ async function main(): Promise<void> {
 
     case "where": {
       const root = findProjectRoot();
+      console.log(`hidden mode  : ${isHidden() ? "ON — nothing is written into the repo" : "off"}`);
       console.log(`project root : ${root ?? "(not in a git repo)"}`);
       if (root) console.log(`project      : ${memoryDir("project")}`);
       console.log(`personal     : ${memoryDir("personal")}`);

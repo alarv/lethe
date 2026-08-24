@@ -135,6 +135,32 @@ and its reasoning, a dead end worth not repeating), record it with `lethe_note`.
 If a recalled memory turns out to be wrong, fix it with `lethe_correct`.
 ```
 
+For **Claude Code**:
+
+```sh
+claude mcp add lethe --scope user --env LETHE_HIDDEN=1 \
+  -- node /absolute/path/to/lethe/dist/cli.js mcp
+```
+
+Claude Code reads `~/.claude/CLAUDE.md` rather than `AGENTS.md`; symlink one to the
+other so a single rules file serves both.
+
+### Hidden mode
+
+`LETHE_HIDDEN=1` keeps project memory *per-project* but stores it outside the repo:
+
+```
+~/.lethe/memory/                          personal scope — one pool, all projects
+~/.lethe/projects/<repo>-<hash>/memory/   project scope, relocated out of the repo
+```
+
+Use it to try Lethe on work repos without anything appearing in `git status`. This is
+deliberately not a `.gitignore` line: ignoring relies on remembering, in every repo,
+forever, and one `git add -f` puts private notes in a team PR. If nothing is written
+into the repo, there is nothing to leak.
+
+Check which mode you are in with `lethe where`.
+
 Inspect the store by hand:
 
 ```sh
