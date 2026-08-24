@@ -129,16 +129,17 @@ Point opencode at it — `~/.config/opencode/opencode.json` for every project, o
 }
 ```
 
-Tools appear as `lethe_recall`, `lethe_note`, `lethe_confirm`, `lethe_correct`,
-`lethe_forget`.
+The server registers `recall`, `note`, `confirm`, `correct` and `forget`. Harnesses
+namespace them by server, so they surface as `lethe_recall` in opencode and
+`mcp__lethe__recall` in Claude Code.
 
 **Then tell your agent when to use them**, or it mostly won't. In `AGENTS.md`:
 
 ```md
-Before investigating anything non-trivial, call `lethe_recall` first — it may
+Before investigating anything non-trivial, call lethe's `recall` first — it may
 already be known. When you learn something durable (a fix, a gotcha, a decision
-and its reasoning, a dead end worth not repeating), record it with `lethe_note`.
-If a recalled memory turns out to be wrong, fix it with `lethe_correct`.
+and its reasoning, a dead end worth not repeating), record it with `note`.
+If a recalled memory turns out to be wrong, fix it with `correct`.
 ```
 
 For **Claude Code**:

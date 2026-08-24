@@ -10,16 +10,17 @@ the description alone. Both judgements happen before anyone reads a doc.
 every user, forever. A tool that could be a parameter should be a parameter. If two
 tools are usually called together, they are one tool.
 
-**Names say what happens.** `lethe_recall`, not `lethe_query_memory_store`. The prefix
-is the namespace; the verb is the action. No `_v2`, no `_ex`, no abbreviations that
-need expanding.
+**Names say what happens.** `recall`, not `query_memory_store`. Do not repeat the
+server name in the tool name: hosts already namespace by server, so a tool called
+`lethe_note` on a server called `lethe` surfaces as `lethe_lethe_note`. No `_v2`, no
+`_ex`, no abbreviations that need expanding.
 
 **Descriptions tell the agent *when*, not just *what*.** "Search memory" is useless —
 the model already knows what search is. "Call this BEFORE investigating something that
 may have been solved before" changes behaviour. Write for a reader who will decide, in
 one pass, whether this call is worth a turn.
 
-**Sensible defaults, few required arguments.** `lethe_note` should need a title and
+**Sensible defaults, few required arguments.** `note` should need a title and
 nothing else. Every required parameter is a chance for the agent to stall or guess.
 
 **No configuration for the common case.** If the default requires an env var, the

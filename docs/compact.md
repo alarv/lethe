@@ -61,7 +61,7 @@ Global downscaling across `semantic` and `procedural`:
 UPDATE memories SET strength = strength * :decay_rate;
 ```
 
-Access reinforces (`lethe_recall` bumps `strength` and `last_accessed`; `lethe_confirm`
+Access reinforces (`recall` bumps `strength` and `last_accessed`; `confirm`
 bumps harder). Memories below threshold go **cold** — they stop surfacing in retrieval
 but are not destroyed. Only under capacity pressure are cold memories purged, oldest and
 weakest first.

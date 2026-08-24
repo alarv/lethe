@@ -240,13 +240,13 @@ that speaks MCP. Provisional tools:
 
 | Tool | Purpose |
 |---|---|
-| `lethe_recall` | Retrieve relevant memory. Returns ids. |
-| `lethe_note` | Write an episode. Cheap, fire-and-forget. |
-| `lethe_confirm` | This memory was right → strengthen. |
-| `lethe_correct` | This memory is wrong → supersede. |
-| `lethe_forget` | Explicit removal. |
+| `recall` | Retrieve relevant memory. Returns ids. |
+| `note` | Write an episode. Cheap, fire-and-forget. |
+| `confirm` | This memory was right → strengthen. |
+| `correct` | This memory is wrong → supersede. |
+| `forget` | Explicit removal. |
 
-`lethe_confirm` and `lethe_correct` are reconsolidation (`docs/brain.md` §6). Retrieval
+`confirm` and `correct` are reconsolidation (`docs/brain.md` §6). Retrieval
 returning ids is what makes them possible: an agent that discovers a memory is stale can
 fix it in place, instead of the store accumulating confident falsehoods.
 

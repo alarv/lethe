@@ -83,10 +83,10 @@ export function createServer(cwd = process.cwd()): McpServer {
   }
 
   server.tool(
-    "lethe_recall",
+    "recall",
     "Search memory for anything already known about this task, codebase, or problem. " +
       "Call this BEFORE investigating something that may have been solved before. " +
-      "Returns memories with ids -- use lethe_confirm or lethe_correct on them.",
+      "Returns memories with ids -- use the confirm or correct tools on them.",
     {
       query: z.string().describe("what you are trying to find out"),
       limit: z.number().int().min(1).max(25).default(8),
@@ -100,14 +100,14 @@ export function createServer(cwd = process.cwd()): McpServer {
           type: "text",
           text: hits.length
             ? hits.map(render).join("\n\n")
-            : "No memories matched. If you learn something durable, record it with lethe_note.",
+            : "No memories matched. If you learn something durable, record it with the note tool.",
         }],
       };
     },
   );
 
   server.tool(
-    "lethe_note",
+    "note",
     "Record something that happened: a fix, a gotcha, a decision and its reasoning, a " +
       "dead end worth not repeating. Cheap and fire-and-forget -- write freely, since " +
       "compaction later distils these and discards what did not matter. Do NOT record " +
@@ -135,7 +135,7 @@ export function createServer(cwd = process.cwd()): McpServer {
   );
 
   server.tool(
-    "lethe_confirm",
+    "confirm",
     "This memory was accurate and useful. Strengthens it so it survives decay.",
     { id: z.string() },
     async ({ id }) => {
@@ -148,7 +148,7 @@ export function createServer(cwd = process.cwd()): McpServer {
   );
 
   server.tool(
-    "lethe_correct",
+    "correct",
     "This memory is now wrong or out of date. Writes a corrected memory and marks the " +
       "old one superseded rather than destroying it, so the history stays auditable.",
     {
@@ -183,9 +183,9 @@ export function createServer(cwd = process.cwd()): McpServer {
   );
 
   server.tool(
-    "lethe_forget",
+    "forget",
     "Delete a memory outright. Use only when it should never have been recorded -- " +
-      "for anything merely outdated, prefer lethe_correct.",
+      "for anything merely outdated, prefer the correct tool.",
     { id: z.string() },
     async ({ id }) => ({
       content: [{ type: "text", text: store.remove(id) ? `forgot ${id}` : `no memory ${id}` }],

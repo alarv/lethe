@@ -41,5 +41,5 @@ they discover in `git status`.
 
 ## Memory
 
-You have `lethe_*` tools available. Use them here too — this repo is the first place
+You have lethe tools available. Use them here too — this repo is the first place
 the thing should prove useful.
