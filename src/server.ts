@@ -12,6 +12,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Store, type Memory } from "./store.js";
 import { compact, type Distiller } from "./compact.js";
+import { log } from "./log.js";
 
 const scopeSchema = z.enum(["local", "team", "personal"]).default("local")
   .describe(
@@ -43,7 +44,10 @@ export function createServer(cwd = process.cwd()): McpServer {
   /** Sampling if the host offers it; otherwise compaction degrades to extractive. */
   function distiller(): Distiller | undefined {
     const caps = server.server.getClientCapabilities();
-    if (!caps?.sampling) return undefined;
+    if (!caps?.sampling) {
+      log("sampling", "host does not support sampling; compaction will be extractive");
+      return undefined;
+    }
     return async (prompt: string) => {
       const res = await server.server.createMessage({
         messages: [{ role: "user", content: { type: "text", text: prompt } }],
@@ -60,10 +64,18 @@ export function createServer(cwd = process.cwd()): McpServer {
     if (episodes.length < PRESSURE_THRESHOLD) return null;
     compacting = true;
     try {
+      log("compact", "pressure threshold reached", { episodes: episodes.length });
       const r = await compact(store, { distil: distiller() });
+      log("compact", r.extractive ? "done (extractive)" : "done (model)", {
+        claims: r.claimsWritten,
+        consumed: r.episodesConsumed,
+        promoted: r.promoted,
+        decayed: r.decayed,
+      });
       if (!r.claimsWritten) return null;
       return `compacted ${r.episodesConsumed} episodes into ${r.claimsWritten} claim(s)`;
-    } catch {
+    } catch (err) {
+      log("error", `compaction failed: ${err instanceof Error ? err.message : String(err)}`);
       return null; // never fail a user-facing call because maintenance failed
     } finally {
       compacting = false;
@@ -82,6 +94,7 @@ export function createServer(cwd = process.cwd()): McpServer {
     async ({ query, limit }) => {
       const hits = store.search(query, limit);
       for (const m of hits) store.touch(m);
+      log("recall", JSON.stringify(query), { hits: hits.length });
       return {
         content: [{
           type: "text",
@@ -110,6 +123,7 @@ export function createServer(cwd = process.cwd()): McpServer {
     },
     async (args) => {
       const m = store.create(args);
+      log("note", m.title, { id: m.id.slice(0, 8), scope: m.scope });
       const note = await relievePressure();
       return {
         content: [{
@@ -128,6 +142,7 @@ export function createServer(cwd = process.cwd()): McpServer {
       const m = store.get(id);
       if (!m) return { content: [{ type: "text", text: `no memory ${id}` }], isError: true };
       store.touch(m, 0.4);
+      log("confirm", m.title, { id: m.id.slice(0, 8), strength: m.strength.toFixed(2) });
       return { content: [{ type: "text", text: `confirmed [${m.id.slice(0, 8)}]` }] };
     },
   );
@@ -154,6 +169,7 @@ export function createServer(cwd = process.cwd()): McpServer {
         salience: Math.max(old.salience, 0.7), // a correction is itself high signal
         provenance: [old.id],
       });
+      log("correct", `${old.title} -> ${next.title}`, { old: old.id.slice(0, 8) });
       old.supersededBy = next.id;
       old.updated = new Date().toISOString();
       store.write(old);
@@ -182,4 +198,5 @@ export function createServer(cwd = process.cwd()): McpServer {
 export async function serve(): Promise<void> {
   const server = createServer();
   await server.connect(new StdioServerTransport());
+  log("start", "mcp server connected", { cwd: process.cwd() });
 }

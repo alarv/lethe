@@ -149,12 +149,26 @@ claude mcp add lethe --scope user -- node /absolute/path/to/lethe/dist/cli.js mc
 Claude Code reads `~/.claude/CLAUDE.md` rather than `AGENTS.md`; symlink one to the
 other so a single rules file serves both.
 
+### Is it working?
+
+```sh
+lethe status         # counts, pressure, and when each tool last fired
+lethe log -n 40      # recent activity
+```
+
+`status` is the one to check after a session. If it says no activity, the agent never
+called the tools — usually because the harness did not start the server, or because
+nothing told the agent to use it. Note that `stdout` is the MCP transport, so nothing is
+ever printed to the terminal; the log file at `~/.lethe/lethe.log` is the only trace.
+`LETHE_DEBUG=1` also mirrors it to stderr.
+
 Inspect the store by hand:
 
 ```sh
 lethe where          # where memory is stored
 lethe ls             # everything recorded
 lethe recall "auth"  # search
+lethe compact --dry-run
 ```
 
 Memory lands in `.lethe/memory/*.md` — commit it to share with your team, or use

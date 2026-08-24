@@ -9,6 +9,7 @@
 import { Store, findProjectRoot, memoryDir, type Scope } from "./store.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
+import { LOG_PATH, tail } from "./log.js";
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
 
@@ -17,6 +18,8 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe recall <query>         search memory
   lethe note <title> [body]    record a memory by hand
   lethe forget <id>            delete a memory
+  lethe status                 is it working? counts, pressure, last activity
+  lethe log [-n N]             recent activity
   lethe where                  show where memory is stored
   lethe compact [--dry-run]    consolidate, promote, decay
 
@@ -41,6 +44,41 @@ async function main(): Promise<void> {
     case "mcp":
       await serve();
       return;
+
+    case "status": {
+      const all = store.all();
+      const by = (k: string) => all.filter((m) => m.kind === k && !m.supersededBy).length;
+      const episodes = by("episode");
+      const lines = tail(500);
+      const last = (e: string) => [...lines].reverse().find((l) => l.includes(` ${e} `));
+
+      console.log(`memories   ${all.length}  (${episodes} episode, ${by("claim")} claim, ${by("pattern")} pattern)`);
+      console.log(`pressure   ${episodes}/12 ${episodes >= 12 ? "— compaction due" : ""}`);
+      console.log(`store      ${memoryDir("local")}`);
+      console.log(`log        ${LOG_PATH}`);
+      console.log("");
+      if (!lines.length) {
+        console.log("No activity logged yet.");
+        console.log("If you expected some: the harness may not have started the server,");
+        console.log("or the agent was never told to call the tools. Check `lethe log`");
+        console.log("after a session, and that your AGENTS.md/CLAUDE.md mentions lethe.");
+        return;
+      }
+      for (const [label, ev] of [["server start", "start"], ["last recall", "recall"], ["last note", "note"], ["last compact", "compact"]] as const) {
+        const l = last(ev);
+        // log line: <24-char ISO><2sp><8-char event><2sp><detail>
+        console.log(`${label.padEnd(13)} ${l ? `${l.slice(0, 19)}  ${l.slice(36)}` : "never"}`);
+      }
+      return;
+    }
+
+    case "log": {
+      const i = rest.indexOf("-n");
+      const n = i >= 0 ? Number(rest[i + 1] ?? 40) : 40;
+      const lines = tail(n);
+      console.log(lines.length ? lines.join("\n") : `nothing logged yet (${LOG_PATH})`);
+      return;
+    }
 
     case "where": {
       const root = findProjectRoot();
