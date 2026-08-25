@@ -60,6 +60,13 @@ const PROMOTE_MIN_EVIDENCE = 2;
  */
 const PROMOTE_MIN_ACCESS = 3;
 const SIMILARITY = 0.12;
+/**
+ * A consolidated claim has to still be about one thing. Beyond a handful of
+ * episodes the distilled result generalises into a platitude -- observed on real
+ * data, where eight episodes became "guard shared instance state in async",
+ * discarding the specific commands and traps that made each one worth keeping.
+ */
+const MAX_CLUSTER = 5;
 
 const STOP = new Set([
   "the", "and", "for", "with", "that", "this", "was", "were", "not", "but", "you",
@@ -108,22 +115,34 @@ export function cluster(episodes: Memory[]): Memory[][] {
     const group = [seed];
     seen.add(seed.id);
 
-    // Grow transitively: A relates to B and B to C should pull C in, even when
-    // A and C share little wording. Sessions drift in vocabulary as they go.
-    for (let grew = true; grew; ) {
+    // Average linkage: a candidate must resemble the group as a whole, not just
+    // one member of it. Single-link growth chains -- A relates to B, B to C, and
+    // a run of weak pairwise links fuses unrelated topics into one cluster. On
+    // real data that turned eight distinct lessons, about pytest, linting,
+    // MLflow packaging and concurrency, into a single meaningless claim.
+    for (let grew = true; grew && group.length < MAX_CLUSTER; ) {
       grew = false;
+      let best: { m: Memory; score: number } | null = null;
+
       for (const other of episodes) {
         if (seen.has(other.id)) continue;
-        const related = group.some((g) => {
-          if (other.files.some((f) => g.files.includes(f))) return true;
-          if (other.tags.some((t) => g.tags.includes(t))) return true;
-          return jaccard(toks.get(g.id)!, toks.get(other.id)!) >= SIMILARITY;
-        });
-        if (related) {
-          group.push(other);
-          seen.add(other.id);
-          grew = true;
-        }
+        // Shared files or tags are concrete evidence of relatedness and still
+        // count on their own; prose similarity has to hold against the average.
+        const concrete = group.some((g) =>
+          other.files.some((f) => g.files.includes(f)) ||
+          other.tags.some((t) => g.tags.includes(t)));
+        const mean =
+          group.reduce((sum, g) => sum + jaccard(toks.get(g.id)!, toks.get(other.id)!), 0) /
+          group.length;
+        if (!concrete && mean < SIMILARITY) continue;
+        const score = concrete ? Math.max(mean, SIMILARITY) : mean;
+        if (!best || score > best.score) best = { m: other, score };
+      }
+
+      if (best) {
+        group.push(best.m);
+        seen.add(best.m.id);
+        grew = true;
       }
     }
     out.push(group);
@@ -182,11 +201,20 @@ async function distilGroup(
     return null;
   }
 
-  const [title, ...body] = reply.split("\n");
-  const claim = {
-    title: (title ?? "").replace(/^#+\s*/, "").trim(),
-    body: body.join("\n").trim(),
-  };
+  let [title, ...body] = reply.split("\n");
+  title = (title ?? "").replace(/^#+\s*/, "").trim();
+
+  // Models sometimes answer in prose rather than title-then-body. Rather than
+  // discard a sound consolidation over formatting, take the first sentence as
+  // the title and keep the rest as body.
+  if (title.length > 120) {
+    const cut = /^(.{20,160}?[.;])\s+/.exec(title);
+    if (cut?.[1]) {
+      body = [title.slice(cut[0].length), ...body];
+      title = cut[1].replace(/[.;]$/, "");
+    }
+  }
+  const claim = { title, body: body.join("\n").trim() };
   // Reject nonconforming output rather than writing it. A claim that is empty or
   // absurdly long is a sign the model ignored the contract, and consuming the
   // source episodes on the strength of it would destroy them for nothing.
@@ -251,7 +279,7 @@ export async function compact(
     report.claimsWritten += 1;
     if (dryRun) continue;
 
-    store.create({
+    const written = store.create({
       kind: "claim",
       scope: claimScope,
       title: claim.title,
@@ -261,7 +289,17 @@ export async function compact(
       salience: Math.max(...group.map((m) => m.salience)),
       provenance: group.map((m) => m.id),
     });
-    for (const m of group) store.remove(m.id);
+
+    // Consumed episodes go cold rather than being deleted (docs/brain.md §7).
+    // A claim is a lossy summary: it keeps the lesson and drops the exact
+    // command, path or error string that often made the episode worth having.
+    // Superseded memories stop surfacing in recall but remain on disk and
+    // resolvable by id, so a claim that turns out to be too vague is recoverable
+    // -- and a mistaken consolidation is no longer destructive.
+    for (const m of group) {
+      m.supersededBy = written.id;
+      store.write(m);
+    }
   }
 
   // 2. Promote ---------------------------------------------------------------
