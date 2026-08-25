@@ -98,9 +98,14 @@ export function memoryDir(scope: Scope, cwd = process.cwd()): string {
   if (scope === "personal") return join(home, "memory");
 
   const root = findProjectRoot(cwd);
-  if (!root) throw new Error("not inside a git repository");
-  if (scope === "team") return join(root, ".lethe", "memory");
-  return join(home, "projects", projectKey(root), "memory");
+  if (scope === "team") {
+    if (!root) throw new Error("team scope needs a git repository");
+    return join(root, ".lethe", "memory");
+  }
+  // Local scope falls back to the working directory when there is no repo.
+  // Throwing here made list() return empty and recall silently answer nothing --
+  // the agent asked four times, got zero hits, and had no way to see why.
+  return join(home, "projects", projectKey(root ?? cwd), "memory");
 }
 
 // ---------------------------------------------------------- serialisation

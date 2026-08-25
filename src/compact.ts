@@ -4,9 +4,8 @@
  * docs/compact.md. Three passes, in order, all off the user's latency path.
  *
  * The model is optional. With one, clusters of episodes are rewritten into a
- * single claim; without one, extractive mode keeps the most representative
- * episode verbatim and drops the rest. Extractive is worse and free -- which of
- * those matters more is what docs/evals.md exists to answer.
+ * single claim. Without one, consolidation does not run at all: episodes wait
+ * for a session that can distil them. Decay still runs either way.
  */
 
 import type { Memory, Store } from "./store.js";
@@ -21,14 +20,19 @@ export interface CompactOptions {
   deep?: boolean;
 }
 
+function episodesWaiting(store: Store): number {
+  return store.all().filter((m) => m.kind === "episode" && !m.supersededBy).length;
+}
+
 export interface CompactReport {
+  /** Consolidation was skipped because no model was available to distil. */
+  skippedNoModel: boolean;
   clustered: number;
   episodesConsumed: number;
   claimsWritten: number;
   promoted: number;
   decayed: number;
   purged: number;
-  extractive: boolean;
   changes: string[];
 }
 
@@ -137,19 +141,10 @@ Rules:
 Episodes:
 `;
 
-function extractive(group: Memory[]): { title: string; body: string } {
-  // Keep the highest-salience episode verbatim; it is the least-bad
-  // representative when there is no model to write a better one.
-  const best = [...group].sort((a, b) => b.salience - a.salience)[0]!;
-  return { title: best.title, body: best.body };
-}
-
 async function distilGroup(
   group: Memory[],
-  distil: Distiller | undefined,
+  distil: Distiller,
 ): Promise<{ title: string; body: string } | null> {
-  if (!distil) return extractive(group);
-
   const episodes = group
     .map((m) => `- ${m.title}${m.body ? `\n  ${m.body.replace(/\n/g, "\n  ")}` : ""}`)
     .join("\n");
@@ -158,12 +153,21 @@ async function distilGroup(
   try {
     reply = (await distil(PROMPT + episodes)).trim();
   } catch {
-    return extractive(group); // host refused or has no sampling; degrade quietly
+    return null; // the model failed; leave the episodes alone
   }
 
   if (!reply || reply.toUpperCase().startsWith("SKIP")) return null;
+
   const [title, ...body] = reply.split("\n");
-  return { title: (title ?? "").replace(/^#+\s*/, "").trim(), body: body.join("\n").trim() };
+  const claim = {
+    title: (title ?? "").replace(/^#+\s*/, "").trim(),
+    body: body.join("\n").trim(),
+  };
+  // Reject nonconforming output rather than writing it. A claim that is empty or
+  // absurdly long is a sign the model ignored the contract, and consuming the
+  // source episodes on the strength of it would destroy them for nothing.
+  if (!claim.title || claim.title.length > 200) return null;
+  return claim;
 }
 
 /**
@@ -186,25 +190,31 @@ export async function compact(
 ): Promise<CompactReport> {
   const { distil, dryRun = false, deep = false } = opts;
   const report: CompactReport = {
+    skippedNoModel: !distil && episodesWaiting(store) > 0,
     clustered: 0,
     episodesConsumed: 0,
     claimsWritten: 0,
     promoted: 0,
     decayed: 0,
     purged: 0,
-    extractive: !distil,
     changes: [],
   };
   const now = Date.now();
 
   // 1. Consolidate -----------------------------------------------------------
+  //
+  // Only ever destructive when a model actually rewrote the episodes into a
+  // claim. Without one there is nothing to consolidate *into*: keeping the most
+  // salient episode and deleting its siblings is not compression, it is losing
+  // eleven memories to keep one. Episodes simply wait for a session that can
+  // distil them.
   const episodes = store.all().filter((m) => m.kind === "episode" && !m.supersededBy);
-  for (const group of cluster(episodes)) {
+  for (const group of distil ? cluster(episodes) : []) {
     if (group.length < 2) continue; // one episode is not yet a lesson
     report.clustered += 1;
 
-    const claim = await distilGroup(group, distil);
-    if (!claim || !claim.title) continue;
+    const claim = await distilGroup(group, distil!);
+    if (!claim) continue;
 
     report.changes.push(
       `${group.length} episodes -> "${claim.title}"\n` +
@@ -265,8 +275,8 @@ export async function compact(
 
 export function formatReport(r: CompactReport): string {
   const lines = [
-    r.extractive
-      ? "extractive mode -- no model available, episodes kept verbatim"
+    r.skippedNoModel
+      ? "no model available -- consolidation skipped, episodes kept intact"
       : "consolidated with the host's model",
     "",
     ...r.changes.map((c) => `  ${c}`),

@@ -10,7 +10,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Store, type Memory } from "./store.js";
+import { Store, memoryDir, type Memory } from "./store.js";
 import { compact, type Distiller } from "./compact.js";
 import { buildStamp, log } from "./log.js";
 
@@ -41,11 +41,11 @@ export function createServer(cwd = process.cwd()): McpServer {
   const store = new Store(cwd);
   const server = new McpServer({ name: "lethe", version: "0.0.1" });
 
-  /** Sampling if the host offers it; otherwise compaction degrades to extractive. */
+  /** Sampling if the host offers it; without it consolidation is skipped. */
   function distiller(): Distiller | undefined {
     const caps = server.server.getClientCapabilities();
     if (!caps?.sampling) {
-      log("sampling", "host does not support sampling; compaction will be extractive");
+      log("sampling", "host does not support sampling; consolidation will be skipped");
       return undefined;
     }
     return async (prompt: string) => {
@@ -66,7 +66,7 @@ export function createServer(cwd = process.cwd()): McpServer {
     try {
       log("compact", "pressure threshold reached", { episodes: episodes.length });
       const r = await compact(store, { distil: distiller() });
-      log("compact", r.extractive ? "done (extractive)" : "done (model)", {
+      log("compact", r.skippedNoModel ? "skipped (no model)" : "done", {
         claims: r.claimsWritten,
         consumed: r.episodesConsumed,
         promoted: r.promoted,
@@ -211,5 +211,9 @@ export function createServer(cwd = process.cwd()): McpServer {
 export async function serve(): Promise<void> {
   const server = createServer();
   await server.connect(new StdioServerTransport());
-  log("start", "mcp server connected", { cwd: process.cwd(), build: buildStamp() });
+  log("start", "mcp server connected", {
+    cwd: process.cwd(),
+    store: memoryDir("local"),
+    build: buildStamp(),
+  });
 }
