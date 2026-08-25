@@ -95,7 +95,9 @@ lethe init --global        # apply a choice to every project
 ```
 
 Where it is stored and whether it is committed are separate decisions: `lethe init`
-adds `.lethe/` to `.gitignore` unless you pass `--commit`.
+adds `.lethe/memory/` to `.gitignore` unless you pass `--commit`. Only the memory is
+ignored — `.lethe/config.json` is committed, so anyone else working on the repo
+inherits the same choice.
 
 Config is read from `<repo>/.lethe/config.json`, then `~/.lethe/config.json`, with
 `LETHE_SCOPE` overriding both. `lethe status` shows which scope is in effect.

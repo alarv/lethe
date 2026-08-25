@@ -77,14 +77,20 @@ export function writeConfig(path: string, next: Config): void {
  */
 export function ignoreInGit(root: string): "added" | "present" | "failed" {
   const path = join(root, ".gitignore");
-  const entry = ".lethe/";
+  // Only the memory. Ignoring all of .lethe/ would also hide config.json, so
+  // the choice of where this project stores memory could not be shared with
+  // anyone else working on it.
+  const entry = ".lethe/memory/";
   try {
     const current = existsSync(path) ? readFileSync(path, "utf8") : "";
-    if (current.split("\n").some((l) => l.trim() === entry || l.trim() === ".lethe")) {
+    if (current.split("\n").some((l) => {
+      const t = l.trim();
+      return t === entry || t === ".lethe/memory" || t === ".lethe/" || t === ".lethe";
+    })) {
       return "present";
     }
     const prefix = current && !current.endsWith("\n") ? "\n" : "";
-    writeFileSync(path, `${current}${prefix}\n# lethe memory (local only)\n${entry}\n`, "utf8");
+    writeFileSync(path, `${current}${prefix}\n# lethe memories stay on this machine; config.json is shared\n${entry}\n`, "utf8");
     return "added";
   } catch {
     return "failed";

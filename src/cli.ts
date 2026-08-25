@@ -209,9 +209,9 @@ async function main(): Promise<void> {
         } else {
           const r = ignoreInGit(root);
           console.log(
-            r === "added" ? "\nadded .lethe/ to .gitignore — memory stays on this machine."
-            : r === "present" ? "\n.lethe/ already in .gitignore — memory stays on this machine."
-            : "\ncould not update .gitignore; add .lethe/ yourself if you do not want it committed.",
+            r === "added" ? "\nadded .lethe/memory/ to .gitignore — memories stay on this machine,\nbut .lethe/config.json is shared so the team inherits this choice."
+            : r === "present" ? "\n.lethe/memory/ already ignored — memories stay on this machine."
+            : "\ncould not update .gitignore; add .lethe/memory/ yourself if you do not want it committed.",
           );
           console.log("re-run with --commit to share it with the team instead.");
         }
