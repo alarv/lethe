@@ -174,6 +174,18 @@ Episodes:
  * which tool it intends to use, or prefaces the answer with "Let me...". That
  * text is not a memory, and storing it as one is worse than storing nothing.
  */
+/** Values that appear in more than one source, else those of the best source. */
+function shared(lists: string[][], group: Memory[]): string[] {
+  const count = new Map<string, number>();
+  for (const list of lists) {
+    for (const v of new Set(list)) count.set(v, (count.get(v) ?? 0) + 1);
+  }
+  const agreed = [...count].filter(([, n]) => n > 1).map(([v]) => v);
+  if (agreed.length) return agreed.slice(0, 8);
+  const best = [...group].sort((a, b) => b.salience - a.salience)[0];
+  return (lists[group.indexOf(best!)] ?? []).slice(0, 8);
+}
+
 const PREAMBLE = /^(let me\b|i'?ll\b|i will\b|here'?s\b|sure[,!.]|okay[,!.]|based on\b|looking at\b|this (is|looks)\b|lethe_|the \w+ tool\b)/i;
 
 async function distilGroup(
@@ -208,17 +220,35 @@ async function distilGroup(
   // discard a sound consolidation over formatting, take the first sentence as
   // the title and keep the rest as body.
   if (title.length > 120) {
-    const cut = /^(.{20,160}?[.;])\s+/.exec(title);
+    // A sentence end, not an abbreviation. Splitting naively produced the title
+    // "...always specify the path, e.g" with the rest orphaned into the body.
+    const cut = /^(.{20,160}?(?<!\b(?:e\.g|i\.e|etc|vs|cf|approx|no)\b)[.;])\s+(?=[A-Z`"'(])/
+      .exec(title);
     if (cut?.[1]) {
       body = [title.slice(cut[0].length), ...body];
       title = cut[1].replace(/[.;]$/, "");
+    } else {
+      // No clean break: keep the whole reply as the body rather than cutting a
+      // sentence in half, and title it from the leading clause.
+      const clause = /^(.{20,150}?)(?:[,;:]|\s+--\s+|\s+—\s+)/.exec(title);
+      if (clause?.[1]) {
+        body = [title, ...body];
+        title = clause[1].trim();
+      } else {
+        // Still nothing to cut on. Trim at a word boundary rather than lose the
+        // claim: a long title is untidy, discarding a sound consolidation is not.
+        body = [title, ...body];
+        title = title.slice(0, 110).replace(/\s+\S*$/, "");
+      }
     }
   }
   const claim = { title, body: body.join("\n").trim() };
   // Reject nonconforming output rather than writing it. A claim that is empty or
   // absurdly long is a sign the model ignored the contract, and consuming the
   // source episodes on the strength of it would destroy them for nothing.
-  if (!claim.title || claim.title.length > 200 || PREAMBLE.test(claim.title)) {
+  // Length is no longer grounds for rejection -- it is fixed above. What is left
+  // is content that should never have been stored: nothing, or agent chatter.
+  if (!claim.title || PREAMBLE.test(claim.title)) {
     log("compact", `rejected nonconforming reply: ${JSON.stringify(reply.slice(0, 160))}`);
     return null;
   }
@@ -284,8 +314,12 @@ export async function compact(
       scope: claimScope,
       title: claim.title,
       body: claim.body,
-      tags: [...new Set(group.flatMap((m) => m.tags))],
-      files: [...new Set(group.flatMap((m) => m.files))],
+      // Union across sources produced thirty tags and a dozen files on one
+      // claim, which is noise: it makes tag matching meaningless and lets path
+      // scoping match half the repository. Keep what more than one episode
+      // agreed on, falling back to the most salient episode's own.
+      tags: shared(group.map((m) => m.tags), group),
+      files: shared(group.map((m) => m.files), group),
       salience: Math.max(...group.map((m) => m.salience)),
       provenance: group.map((m) => m.id),
     });
