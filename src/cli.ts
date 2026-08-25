@@ -25,8 +25,8 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe doctor                 diagnose setup problems
   lethe status                 is it working? counts, pressure, last activity
   lethe log [-n N]             recent activity
-  lethe init [--scope=S]       choose where this project stores memory
-       [--global] [--commit]
+  lethe init [--private]       set up memory for this project
+       [--scope=S] [--global]
   lethe projects               every project with stored memory
   lethe where                  show where memory is stored
   lethe compact [--dry-run]    consolidate, promote, decay
@@ -204,17 +204,16 @@ async function main(): Promise<void> {
 
       // Storing in the repo and committing it are separate choices.
       if (want === "team" && root) {
-        if (rest.includes("--commit")) {
-          console.log("\ncommitted: memory is shared with anyone who clones this repo.");
-        } else {
-          const r = ignoreInGit(root);
-          console.log(
-            r === "added" ? "\nadded .lethe/memory/ to .gitignore — memories stay on this machine,\nbut .lethe/config.json is shared so the team inherits this choice."
-            : r === "present" ? "\n.lethe/memory/ already ignored — memories stay on this machine."
-            : "\ncould not update .gitignore; add .lethe/memory/ yourself if you do not want it committed.",
-          );
-          console.log("re-run with --commit to share it with the team instead.");
-        }
+        const share = !rest.includes("--private");
+        const r = ignoreInGit(root, share);
+        console.log("");
+        console.log("episodes   private to you, never committed");
+        console.log(share
+          ? "claims     committed — the team inherits what has been learned"
+          : "claims     kept local — uncomment .lethe/memory/ in .gitignore to share");
+        if (r === "present") console.log("\n.gitignore already had a lethe section; left alone.");
+        else if (r === "failed") console.log("\ncould not write .gitignore.");
+        if (share) console.log("\nre-run with --private to keep claims off the repo.");
       }
       return;
     }
@@ -277,7 +276,8 @@ async function main(): Promise<void> {
         return;
       }
       for (const m of hits) {
-        console.log(`\n[${m.id.slice(0, 8)}] ${m.title}`);
+        const from = m.fromProject ? `  (from ${m.fromProject})` : "";
+        console.log(`\n[${m.id.slice(0, 8)}] ${m.title}${from}`);
         if (m.body) console.log(m.body.split("\n").map((l) => `  ${l}`).join("\n"));
       }
       return;

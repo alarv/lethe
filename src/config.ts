@@ -75,22 +75,37 @@ export function writeConfig(path: string, next: Config): void {
  * point of `team` scope is usually to keep data out of the home directory, not
  * necessarily to share it.
  */
-export function ignoreInGit(root: string): "added" | "present" | "failed" {
+export function ignoreInGit(root: string, share: boolean): "added" | "present" | "failed" {
   const path = join(root, ".gitignore");
-  // Only the memory. Ignoring all of .lethe/ would also hide config.json, so
-  // the choice of where this project stores memory could not be shared with
-  // anyone else working on it.
-  const entry = ".lethe/memory/";
+  const marker = "# lethe";
   try {
     const current = existsSync(path) ? readFileSync(path, "utf8") : "";
-    if (current.split("\n").some((l) => {
-      const t = l.trim();
-      return t === entry || t === ".lethe/memory" || t === ".lethe/" || t === ".lethe";
-    })) {
-      return "present";
-    }
+    if (current.includes(marker)) return "present";
+
+    // Episodes are never shared -- they are a private scratchpad that
+    // compaction deletes. Only consolidated claims are worth committing, and
+    // the line is written either way so the choice is visible and reversible
+    // by editing one character rather than by reading the documentation.
+    const block = share
+      ? [
+          "# lethe: private working memory, never shared",
+          ".lethe/episodes/",
+          "",
+          "# Consolidated team memory is committed, so anyone cloning this repo",
+          "# inherits what has been learned. Uncomment to keep it local instead:",
+          "# .lethe/memory/",
+        ]
+      : [
+          "# lethe: private working memory, never shared",
+          ".lethe/episodes/",
+          "",
+          "# Consolidated team memory. Comment this out to share it with the team",
+          "# by committing it to this repository:",
+          ".lethe/memory/",
+        ];
+
     const prefix = current && !current.endsWith("\n") ? "\n" : "";
-    writeFileSync(path, `${current}${prefix}\n# lethe memories stay on this machine; config.json is shared\n${entry}\n`, "utf8");
+    writeFileSync(path, `${current}${prefix}\n${block.join("\n")}\n`, "utf8");
     return "added";
   } catch {
     return "failed";
