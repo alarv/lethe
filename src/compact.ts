@@ -9,6 +9,7 @@
  */
 
 import type { Memory, Store } from "./store.js";
+import { log } from "./log.js";
 
 /** Asks a model for a completion. Supplied by the MCP host via sampling. */
 export type Distiller = (prompt: string) => Promise<string>;
@@ -136,10 +137,19 @@ Rules:
   "we spent time debugging tests".
 - Keep what makes it actionable: commands, paths, error strings.
 - Drop what was incidental: timings, dead ends that led nowhere, narration.
-- No preamble. Reply with a title line, then a blank line, then 1-3 lines of body.
+- No preamble, no commentary, no tool use. Do not explain what you are doing.
+- Your entire reply is the memory itself: a title line, a blank line, then 1-3
+  lines of body. Nothing before the title.
 
 Episodes:
 `;
+
+/**
+ * Agent CLIs are the fallback distiller, and an agent narrates: it announces
+ * which tool it intends to use, or prefaces the answer with "Let me...". That
+ * text is not a memory, and storing it as one is worse than storing nothing.
+ */
+const PREAMBLE = /^(let me\b|i'?ll\b|i will\b|here'?s\b|sure[,!.]|okay[,!.]|based on\b|looking at\b|this (is|looks)\b|lethe_|the \w+ tool\b)/i;
 
 async function distilGroup(
   group: Memory[],
@@ -152,11 +162,19 @@ async function distilGroup(
   let reply: string;
   try {
     reply = (await distil(PROMPT + episodes)).trim();
-  } catch {
+  } catch (err) {
+    log("error", `distil failed: ${err instanceof Error ? err.message : String(err)}`);
     return null; // the model failed; leave the episodes alone
   }
 
-  if (!reply || reply.toUpperCase().startsWith("SKIP")) return null;
+  if (!reply) {
+    log("compact", "rejected: model returned nothing");
+    return null;
+  }
+  if (reply.toUpperCase().startsWith("SKIP")) {
+    log("compact", "model judged the group unrelated; left intact");
+    return null;
+  }
 
   const [title, ...body] = reply.split("\n");
   const claim = {
@@ -166,7 +184,10 @@ async function distilGroup(
   // Reject nonconforming output rather than writing it. A claim that is empty or
   // absurdly long is a sign the model ignored the contract, and consuming the
   // source episodes on the strength of it would destroy them for nothing.
-  if (!claim.title || claim.title.length > 200) return null;
+  if (!claim.title || claim.title.length > 200 || PREAMBLE.test(claim.title)) {
+    log("compact", `rejected nonconforming reply: ${JSON.stringify(reply.slice(0, 160))}`);
+    return null;
+  }
   return claim;
 }
 

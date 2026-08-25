@@ -7,12 +7,14 @@
  * store to accumulate confident falsehoods (docs/brain.md §6).
  */
 
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { Store, memoryDir, type Memory } from "./store.js";
 import { compact, type Distiller } from "./compact.js";
 import { buildStamp, log } from "./log.js";
+import { logResolved, resolveDistiller } from "./distil.js";
 
 const scopeSchema = z.enum(["local", "team", "personal"]).default("local")
   .describe(
@@ -38,16 +40,42 @@ function render(m: Memory): string {
 const PRESSURE_THRESHOLD = 12;
 
 export function createServer(cwd = process.cwd()): McpServer {
-  const store = new Store(cwd);
+  let store = new Store(cwd);
   const server = new McpServer({ name: "lethe", version: "0.0.1" });
 
-  /** Sampling if the host offers it; without it consolidation is skipped. */
-  function distiller(): Distiller | undefined {
-    const caps = server.server.getClientCapabilities();
-    if (!caps?.sampling) {
-      log("sampling", "host does not support sampling; consolidation will be skipped");
-      return undefined;
+  /**
+   * Bind the store to the workspace the client is actually in.
+   *
+   * The server's cwd is set by the harness and need not be the project: it has
+   * been observed as /private/tmp and as a parent directory of the repo being
+   * worked on, which silently splits reads and writes across different stores --
+   * memories written in one session are invisible in the next, and ids resolve
+   * to nothing. MCP roots is the client telling us where it is, so prefer it.
+   */
+  let bound = false;
+  /** Lazy: client capabilities are only populated after initialize completes. */
+  async function ensureBound(): Promise<void> {
+    if (bound) return;
+    bound = true;
+    try {
+      const caps = server.server.getClientCapabilities();
+      if (!caps?.roots) return;
+      const { roots } = await server.server.listRoots();
+      const first = roots.find((r) => r.uri.startsWith("file://"));
+      if (!first) return;
+      const dir = fileURLToPath(first.uri);
+      if (dir === cwd) return;
+      store = new Store(dir);
+      log("start", "bound to workspace root", { root: dir, store: memoryDir("local", dir) });
+    } catch {
+      // Client does not implement roots; the cwd-based store stands.
     }
+  }
+
+  /** The host's own model, when it advertises sampling. */
+  function hostSampling(): Distiller | undefined {
+    const caps = server.server.getClientCapabilities();
+    if (!caps?.sampling) return undefined;
     return async (prompt: string) => {
       const res = await server.server.createMessage({
         messages: [{ role: "user", content: { type: "text", text: prompt } }],
@@ -58,28 +86,38 @@ export function createServer(cwd = process.cwd()): McpServer {
   }
 
   let compacting = false;
-  async function relievePressure(): Promise<string | null> {
-    if (compacting) return null;
+
+  /**
+   * Fire-and-forget. Compaction may spawn a CLI and take tens of seconds, and
+   * awaiting it here would stall the tool call that triggered it -- exactly the
+   * latency path compaction is supposed to stay off. Results go to the log.
+   */
+  function relievePressure(): void {
+    if (compacting) return;
     const episodes = store.all().filter((m) => m.kind === "episode" && !m.supersededBy);
-    if (episodes.length < PRESSURE_THRESHOLD) return null;
+    if (episodes.length < PRESSURE_THRESHOLD) return;
     compacting = true;
-    try {
-      log("compact", "pressure threshold reached", { episodes: episodes.length });
-      const r = await compact(store, { distil: distiller() });
-      log("compact", r.skippedNoModel ? "skipped (no model)" : "done", {
-        claims: r.claimsWritten,
-        consumed: r.episodesConsumed,
-        promoted: r.promoted,
-        decayed: r.decayed,
-      });
-      if (!r.claimsWritten) return null;
-      return `compacted ${r.episodesConsumed} episodes into ${r.claimsWritten} claim(s)`;
-    } catch (err) {
-      log("error", `compaction failed: ${err instanceof Error ? err.message : String(err)}`);
-      return null; // never fail a user-facing call because maintenance failed
-    } finally {
-      compacting = false;
-    }
+
+    void (async () => {
+      try {
+        const resolved = await resolveDistiller(hostSampling());
+        logResolved(resolved);
+        if (!resolved) return; // episodes wait for a session that can distil
+        log("compact", "pressure threshold reached", { episodes: episodes.length });
+        const r = await compact(store, { distil: resolved.distil });
+        log("compact", "done", {
+          via: resolved.via,
+          claims: r.claimsWritten,
+          consumed: r.episodesConsumed,
+          promoted: r.promoted,
+          decayed: r.decayed,
+        });
+      } catch (err) {
+        log("error", `compaction failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        compacting = false;
+      }
+    })();
   }
 
   server.tool(
@@ -92,6 +130,7 @@ export function createServer(cwd = process.cwd()): McpServer {
       limit: z.number().int().min(1).max(25).default(8),
     },
     async ({ query, limit }) => {
+      await ensureBound();
       const hits = store.search(query, limit);
       for (const m of hits) store.touch(m);
       log("recall", JSON.stringify(query), { hits: hits.length });
@@ -122,15 +161,11 @@ export function createServer(cwd = process.cwd()): McpServer {
         .describe("how much this deserves to survive. Resolved failures and surprises rank high."),
     },
     async (args) => {
+      await ensureBound();
       const m = store.create(args);
       log("note", m.title, { id: m.id.slice(0, 8), scope: m.scope });
-      const note = await relievePressure();
-      return {
-        content: [{
-          type: "text",
-          text: `recorded [${m.id.slice(0, 8)}] ${m.title}${note ? `\n${note}` : ""}`,
-        }],
-      };
+      relievePressure();
+      return { content: [{ type: "text", text: `recorded [${m.id.slice(0, 8)}] ${m.title}` }] };
     },
   );
 
@@ -139,6 +174,7 @@ export function createServer(cwd = process.cwd()): McpServer {
     "This memory was accurate and useful. Strengthens it so it survives decay.",
     { id: z.string() },
     async ({ id }) => {
+      await ensureBound();
       const m = store.get(id);
       if (!m) {
         return {
@@ -162,6 +198,7 @@ export function createServer(cwd = process.cwd()): McpServer {
       body: z.string().default(""),
     },
     async ({ id, title, body }) => {
+      await ensureBound();
       const old = store.get(id);
       if (!old) {
         return {
@@ -197,18 +234,29 @@ export function createServer(cwd = process.cwd()): McpServer {
     "Delete a memory outright. Use only when it should never have been recorded -- " +
       "for anything merely outdated, prefer the correct tool.",
     { id: z.string() },
-    async ({ id }) => ({
+    async ({ id }) => {
+      await ensureBound();
+      return ({
       content: [{
         type: "text",
         text: store.remove(id) ? `forgot ${id}` : `no memory ${id} — recall again for current ids`,
       }],
-    }),
+    });
+    },
   );
 
   return server;
 }
 
 export async function serve(): Promise<void> {
+  // Refuse to start inside a distiller subprocess. Agent CLIs used for
+  // distillation load their own MCP config, so the child would otherwise get
+  // lethe's tools and write to the very store being compacted -- observed in
+  // practice: a child wrote a memory mid-compaction.
+  if (process.env.LETHE_CHILD === "1") {
+    log("start", "refusing to start inside a distiller subprocess");
+    return;
+  }
   const server = createServer();
   await server.connect(new StdioServerTransport());
   log("start", "mcp server connected", {

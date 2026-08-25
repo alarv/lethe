@@ -10,6 +10,7 @@ import { Store, findProjectRoot, memoryDir, type Scope } from "./store.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
 import { LOG_PATH, buildStamp, tail } from "./log.js";
+import { describeDistiller, resolveDistiller } from "./distil.js";
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
 
@@ -57,6 +58,7 @@ async function main(): Promise<void> {
       const root = findProjectRoot();
       console.log(`store      ${root ? memoryDir("local") : "(not in a git repo — local scope unavailable)"}`);
       console.log(`log        ${LOG_PATH}`);
+      console.log(`distiller  ${await describeDistiller()}`);
       console.log("");
       if (!lines.length) {
         console.log("No activity logged yet.");
@@ -155,7 +157,10 @@ async function main(): Promise<void> {
     }
 
     case "compact": {
+      const resolved = await resolveDistiller();
+      if (resolved) console.log(`distilling via ${resolved.via}\n`);
       const r = await compact(store, {
+        ...(resolved ? { distil: resolved.distil } : {}),
         dryRun: rest.includes("--dry-run"),
         deep: rest.includes("--deep"),
       });
