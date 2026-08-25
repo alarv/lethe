@@ -11,15 +11,21 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Store, memoryDir, type Memory } from "./store.js";
+import { Store, memoryDir, type Memory, type Scope } from "./store.js";
+import { defaultScope } from "./config.js";
 import { compact, type Distiller } from "./compact.js";
 import { buildStamp, log } from "./log.js";
 import { logResolved, resolveDistiller } from "./distil.js";
 
-const scopeSchema = z.enum(["local", "team", "personal"]).default("local")
+/**
+ * Left optional rather than defaulted, so the configured scope applies. A zod
+ * default is fixed when the tool is registered, which would override config.
+ */
+const scopeSchema = z.enum(["local", "team", "personal"]).optional()
   .describe(
-    "local = this repo, private to you (default) | " +
-    "team = committed to the repo and shared | " +
+    "omit to use the configured default | " +
+    "local = this repo, stored outside it, private to you | " +
+    "team = stored in the repo itself | " +
     "personal = you, across every repo",
   );
 
@@ -41,6 +47,9 @@ const PRESSURE_THRESHOLD = 12;
 
 export function createServer(cwd = process.cwd()): McpServer {
   let store = new Store(cwd);
+  let root = cwd;
+  /** The directory config and scope resolve against. */
+  const workspace = () => root;
   const server = new McpServer({ name: "lethe", version: "0.0.1" });
 
   /**
@@ -66,6 +75,7 @@ export function createServer(cwd = process.cwd()): McpServer {
       const dir = fileURLToPath(first.uri);
       if (dir === cwd) return;
       store = new Store(dir);
+      root = dir;
       log("start", "bound to workspace root", { root: dir, store: memoryDir("local", dir) });
     } catch {
       // Client does not implement roots; the cwd-based store stands.
@@ -162,7 +172,7 @@ export function createServer(cwd = process.cwd()): McpServer {
     },
     async (args) => {
       await ensureBound();
-      const m = store.create(args);
+      const m = store.create({ ...args, scope: args.scope ?? defaultScope(workspace()) });
       log("note", m.title, { id: m.id.slice(0, 8), scope: m.scope });
       relievePressure();
       return { content: [{ type: "text", text: `recorded [${m.id.slice(0, 8)}] ${m.title}` }] };

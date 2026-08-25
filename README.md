@@ -85,6 +85,21 @@ hands the agent an id along with the memory.
 <repo>/.lethe/memory/*.md    team scope: committed, reviewed in PRs
 ```
 
+By default memory lives under `~/.lethe`, so nothing appears in your repository
+unless you ask for it. To keep it in the project instead:
+
+```sh
+lethe init                 # store in <repo>/.lethe, and gitignore it
+lethe init --commit        # store in <repo>/.lethe and share it with the team
+lethe init --global        # apply a choice to every project
+```
+
+Where it is stored and whether it is committed are separate decisions: `lethe init`
+adds `.lethe/` to `.gitignore` unless you pass `--commit`.
+
+Config is read from `<repo>/.lethe/config.json`, then `~/.lethe/config.json`, with
+`LETHE_SCOPE` overriding both. `lethe status` shows which scope is in effect.
+
 The project directory is the full path with separators flattened. Using just the
 folder name would collide -- everyone has more than one repo called `api` -- and a
 hash would be unique but unreadable, which matters the moment you go looking. Run

@@ -88,9 +88,12 @@ retrieved on query.
   models/            ← cached embedding model.
 ```
 
-Two scopes: **project** memory lives in the repo and is shared by the team; **personal**
-memory lives in `$HOME` and is yours alone. A memory is written to one or the other,
-never both.
+Three scopes. **local** is the default: memory for this repository, kept in `$HOME` so
+nothing appears in the working tree. **team** puts it in the repository itself, for
+sharing or simply to keep it near the code. **personal** is yours across every project.
+
+Where memory is stored and whether it is committed are independent: `lethe init` writes
+`.lethe/` to `.gitignore` unless asked not to.
 
 ### Why the database is not the source of truth
 

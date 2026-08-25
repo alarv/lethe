@@ -7,6 +7,7 @@
  */
 
 import { Store, findProjectRoot, letheHome, memoryDir, readSource, type Scope } from "./store.js";
+import { defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, writeConfig } from "./config.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
 import { existsSync, readdirSync } from "node:fs";
@@ -24,6 +25,8 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe doctor                 diagnose setup problems
   lethe status                 is it working? counts, pressure, last activity
   lethe log [-n N]             recent activity
+  lethe init [--scope=S]       choose where this project stores memory
+       [--global] [--commit]
   lethe projects               every project with stored memory
   lethe where                  show where memory is stored
   lethe compact [--dry-run]    consolidate, promote, decay
@@ -43,7 +46,7 @@ function flag(args: string[], name: string): string | undefined {
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const store = new Store();
-  const scope = (flag(rest, "scope") ?? "local") as Scope;
+  const scope = (flag(rest, "scope") as Scope | undefined) ?? defaultScope();
 
   switch (cmd) {
     case "mcp":
@@ -145,6 +148,7 @@ async function main(): Promise<void> {
       console.log(`store      ${root ? memoryDir("local") : "(not in a git repo — local scope unavailable)"}`);
       console.log(`log        ${LOG_PATH}`);
       console.log(`distiller  ${await describeDistiller()}`);
+      console.log(`scope      ${defaultScope()}${loadConfig().scope ? " (configured)" : " (default)"}`);
       console.log("");
       if (!lines.length) {
         console.log("No activity logged yet.");
@@ -175,6 +179,43 @@ async function main(): Promise<void> {
       const n = i >= 0 ? Number(rest[i + 1] ?? 40) : 40;
       const lines = tail(n);
       console.log(lines.length ? lines.join("\n") : `nothing logged yet (${LOG_PATH})`);
+      return;
+    }
+
+    case "init": {
+      const want = (flag(rest, "scope") as Scope | undefined) ?? "team";
+      const isGlobal = rest.includes("--global");
+      const root = findProjectRoot();
+
+      if (want === "team" && !root && !isGlobal) {
+        console.error("team scope stores memory in the repository, and this is not one.");
+        process.exit(1);
+      }
+
+      const path = isGlobal ? globalConfigPath() : projectConfigPath();
+      if (!path) {
+        console.error("not inside a git repository; use --global");
+        process.exit(1);
+      }
+      writeConfig(path, { scope: want });
+      console.log(`${isGlobal ? "global" : "project"} config  ${path}`);
+      console.log(`default scope  ${want}`);
+      console.log(`memory goes to ${memoryDir(want)}`);
+
+      // Storing in the repo and committing it are separate choices.
+      if (want === "team" && root) {
+        if (rest.includes("--commit")) {
+          console.log("\ncommitted: memory is shared with anyone who clones this repo.");
+        } else {
+          const r = ignoreInGit(root);
+          console.log(
+            r === "added" ? "\nadded .lethe/ to .gitignore — memory stays on this machine."
+            : r === "present" ? "\n.lethe/ already in .gitignore — memory stays on this machine."
+            : "\ncould not update .gitignore; add .lethe/ yourself if you do not want it committed.",
+          );
+          console.log("re-run with --commit to share it with the team instead.");
+        }
+      }
       return;
     }
 
