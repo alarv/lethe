@@ -19,6 +19,10 @@ total is cut back.
 
 `lethe compact` does the same three things, in order:
 
+Consolidation is also the moment a memory becomes shareable: episodes are always
+private, and the claim distilled from them is what reaches the team (see
+`docs/architecture.md` § Storage).
+
 ### 1. Consolidate
 
 Cluster related episodes, distil the invariant into a durable claim, discard the raw
@@ -225,12 +229,6 @@ promotion, decay, cold purge, and the pressure trigger.
 
 Not built: embeddings-based clustering, and any evidence that the model path beats
 the extractive one. That comparison is `docs/evals.md`.
-
-## Known issues
-
-- **Compaction can move a memory across scopes.** A cluster containing both `team`
-  and `local` episodes writes its claim to the scope of the first episode, consuming
-  the others. Shared memory should not silently become private.
 
 ## Open questions
 

@@ -88,12 +88,37 @@ retrieved on query.
   models/            ← cached embedding model.
 ```
 
-Three scopes. **local** is the default: memory for this repository, kept in `$HOME` so
-nothing appears in the working tree. **team** puts it in the repository itself, for
-sharing or simply to keep it near the code. **personal** is yours across every project.
+**Where a memory lives is decided by what it is, not by who asks.**
 
-Where memory is stored and whether it is committed are independent: `lethe init` writes
-`.lethe/` to `.gitignore` unless asked not to.
+| Kind | Location | Shared |
+|---|---|---|
+| `episode` | always `~/.lethe/projects/<key>/` | never |
+| `claim`, `pattern` | the configured scope; `team` puts them in the repo | yes, by default |
+
+Episodes are a private scratchpad: verbose, numerous, and deleted by compaction. Three
+hundred people's scratchpads is noise, not knowledge, and sharing them is the fastest
+way to make shared memory useless. Claims and patterns are what survived, and are the
+only things worth anyone else reading -- so **compaction is the promotion step from
+private experience to shared knowledge.**
+
+This also removes a defect: scope used to travel with a memory, so compacting a cluster
+that spanned scopes could silently turn team memory private.
+
+### Reading across projects
+
+A repository is not the same thing as a problem. A service, its infrastructure repo and
+its client are one system to whoever is working on them, and a lesson learned in one is
+routinely needed in another. When the current project has little to say, retrieval falls
+back to neighbouring project stores, discounted so anything local still wins, and marks
+where each borrowed memory came from. Borrowed memories are not reinforced -- one
+project's usage should not distort another's decay.
+
+### Attribution
+
+Every memory records an `author`, taken from `git config user.email`, and `confirmedBy`
+accumulates the distinct people who found it accurate. A claim three people independently
+confirmed is team knowledge; a claim one person wrote once is a hypothesis. Shared memory
+that shows up in review needs to say who learned it.
 
 ### Why the database is not the source of truth
 
