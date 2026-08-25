@@ -181,6 +181,15 @@ function unesc(s: string): string {
   return s.replace(/\\n/g, "\n").replace(/\\\\/g, "\\");
 }
 
+/**
+ * Only what is durable and worth sharing.
+ *
+ * strength, accessCount, lastAccessed and decayedAt describe *your* relationship
+ * with a memory, not the memory, and they change on every recall. Keeping them
+ * here meant a single lookup rewrote three lines of a committed file, so any two
+ * people reading the same memory conflicted on the same lines every time. They
+ * live in a per-machine sidecar instead -- see Dynamics.
+ */
 export function serialize(m: Memory): string {
   const fm = [
     `id: ${m.id}`,
@@ -189,12 +198,8 @@ export function serialize(m: Memory): string {
     `tags: ${m.tags.join(", ")}`,
     `files: ${m.files.join(", ")}`,
     `salience: ${m.salience}`,
-    `strength: ${m.strength}`,
-    `decayedAt: ${m.decayedAt}`,
-    `accessCount: ${m.accessCount}`,
     `created: ${m.created}`,
     `updated: ${m.updated}`,
-    `lastAccessed: ${m.lastAccessed ?? ""}`,
     `provenance: ${m.provenance.join(", ")}`,
     `supersededBy: ${m.supersededBy ?? ""}`,
   ].join("\n");
@@ -242,8 +247,78 @@ function slug(s: string): string {
     "memory";
 }
 
+/** Per-memory state that belongs to this machine, not to the team. */
+interface Dyn {
+  strength: number;
+  accessCount: number;
+  lastAccessed: string | null;
+  decayedAt: string;
+}
+
+/**
+ * Sidecar for the mutable half of a memory.
+ *
+ * Always under $LETHE_HOME, never in the repository, so recall and decay never
+ * touch a tracked file. Decay is also genuinely personal: a memory you rely on
+ * daily should not be weakened because a colleague never opens it.
+ */
+class Dynamics {
+  private data: Record<string, Dyn> = {};
+  private loaded = false;
+
+  constructor(private readonly file: string) {}
+
+  private load(): void {
+    if (this.loaded) return;
+    this.loaded = true;
+    try {
+      this.data = JSON.parse(readFileSync(this.file, "utf8")) as Record<string, Dyn>;
+    } catch {
+      this.data = {};
+    }
+  }
+
+  get(id: string, created: string): Dyn {
+    this.load();
+    return this.data[id] ?? {
+      strength: 1,
+      accessCount: 0,
+      lastAccessed: null,
+      decayedAt: created,
+    };
+  }
+
+  set(id: string, d: Dyn): void {
+    this.load();
+    this.data[id] = d;
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      writeFileSync(this.file, JSON.stringify(this.data, null, 0), "utf8");
+    } catch {
+      // Losing reinforcement is survivable; failing a recall is not.
+    }
+  }
+
+  drop(id: string): void {
+    this.load();
+    delete this.data[id];
+    try {
+      writeFileSync(this.file, JSON.stringify(this.data, null, 0), "utf8");
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 export class Store {
-  constructor(private readonly cwd = process.cwd()) {}
+  private readonly dyn: Dynamics;
+
+  constructor(private readonly cwd = process.cwd()) {
+    const root = findProjectRoot(cwd) ?? cwd;
+    this.dyn = new Dynamics(
+      join(letheHome(), "projects", projectKey(root), "dynamics.json"),
+    );
+  }
 
   private dir(scope: Scope): string {
     const d = memoryDir(scope, this.cwd);
@@ -266,7 +341,9 @@ export class Store {
     for (const name of readdirSync(dir)) {
       if (!name.endsWith(".md")) continue;
       const m = parse(readFileSync(join(dir, name), "utf8"), scope);
-      if (m) out.push(m);
+      if (!m) continue;
+      Object.assign(m, this.dyn.get(m.id, m.created));
+      out.push(m);
     }
     return out;
   }
@@ -293,6 +370,7 @@ export class Store {
 
   write(m: Memory): Memory {
     writeFileSync(this.pathFor(m), serialize(m), "utf8");
+    this.saveDynamics(m);
     return m;
   }
 
@@ -300,6 +378,7 @@ export class Store {
     const m = this.get(id);
     if (!m) return false;
     rmSync(this.pathFor(m), { force: true });
+    this.dyn.drop(m.id);
     return true;
   }
 
@@ -342,7 +421,19 @@ export class Store {
     m.accessCount += 1;
     m.strength = Math.min(2, m.strength + amount);
     m.lastAccessed = new Date().toISOString();
-    return this.write(m);
+    // Reinforcement is local, so this must not rewrite the shared file.
+    this.saveDynamics(m);
+    return m;
+  }
+
+  /** Persist only the per-machine half. */
+  saveDynamics(m: Memory): void {
+    this.dyn.set(m.id, {
+      strength: m.strength,
+      accessCount: m.accessCount,
+      lastAccessed: m.lastAccessed,
+      decayedAt: m.decayedAt,
+    });
   }
 
   /**

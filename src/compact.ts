@@ -268,7 +268,7 @@ export async function compact(
     report.promoted += 1;
     report.changes.push(`promote -> pattern: "${m.title}"`);
     if (dryRun) continue;
-    m.kind = "pattern";
+    m.kind = "pattern";           // durable: belongs in the shared file
     m.strength = Math.min(2, m.strength + 0.3);
     store.write(m);
   }
@@ -288,7 +288,8 @@ export async function compact(
     if (dryRun) continue;
     m.strength = next;
     m.decayedAt = new Date(now).toISOString();
-    store.write(m);
+    // Decay is per-machine; writing the memory would dirty a shared file.
+    store.saveDynamics(m);
   }
 
   return report;
