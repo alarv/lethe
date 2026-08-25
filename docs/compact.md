@@ -226,6 +226,12 @@ promotion, decay, cold purge, and the pressure trigger.
 Not built: embeddings-based clustering, and any evidence that the model path beats
 the extractive one. That comparison is `docs/evals.md`.
 
+## Known issues
+
+- **Compaction can move a memory across scopes.** A cluster containing both `team`
+  and `local` episodes writes its claim to the scope of the first episode, consuming
+  the others. Shared memory should not silently become private.
+
 ## Open questions
 
 - **Does step 1 need an LLM?** It is the only part of Lethe that would. Extractive
