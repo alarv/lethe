@@ -9,6 +9,8 @@
 import { Store, findProjectRoot, memoryDir, type Scope } from "./store.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { LOG_PATH, buildStamp, tail } from "./log.js";
 import { describeDistiller, resolveDistiller } from "./distil.js";
 
@@ -89,10 +91,35 @@ async function main(): Promise<void> {
         problems.push("Memories are being written but never read back. The rules file needs to push recall before investigating.");
       }
 
-      const stores = [...new Set(lines.filter((l) => l.includes(" start ")).map((l) => /store=(\S+)/.exec(l)?.[1]).filter(Boolean))];
-      if (stores.length > 1) {
-        console.log(`WARN split      ${stores.length} different stores seen in the log`);
-        problems.push("Sessions have used different stores, so memories written in one are invisible in another:\n  " + stores.join("\n  "));
+      // Different repositories legitimately have different stores. What matters
+      // is a store keyed to somewhere that is not a project at all -- a temp
+      // directory, your home directory, or a parent folder that merely contains
+      // repositories. Those are the sessions whose memories nobody will find.
+      const seen = new Map<string, string>();
+      for (const l of lines) {
+        if (!l.includes(" start ")) continue;
+        const cwd = /cwd=(\S+)/.exec(l)?.[1];
+        const st = /store=(\S+)/.exec(l)?.[1];
+        if (cwd && st) seen.set(cwd, st);
+      }
+      const orphans = [...seen].filter(([cwd]) => !existsSync(join(cwd, ".git")));
+      const withContent = orphans.filter(([, st]) =>
+        existsSync(st) && readdirSync(st).some((f) => f.endsWith(".md")));
+
+      const bindState = withContent.length ? "FAIL" : orphans.length ? "warn" : "ok  ";
+      console.log(`${bindState} binding    ${seen.size} workspace(s)${orphans.length ? `, ${orphans.length} outside a repo` : ""}`);
+      if (withContent.length) {
+        problems.push(
+          "Memories were written from directories that are not repositories, so\n" +
+          "  they are keyed somewhere nothing will look again:\n  " +
+          withContent.map(([cwd, st]) => `${cwd}\n    -> ${st}`).join("\n  "),
+        );
+      } else if (orphans.length) {
+        problems.push(
+          "Some sessions ran outside a repository, but those stores are empty --\n" +
+          "  nothing was lost. Newer builds ask the client for its workspace root,\n" +
+          "  so this should not recur.",
+        );
       }
 
       if (!problems.length) {
