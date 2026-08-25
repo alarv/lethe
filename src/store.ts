@@ -608,7 +608,11 @@ export class Store {
         .filter((m) => !m.supersededBy)
         .map((m) => ({ m, score: this.score(m, tokens, paths) }))
         .filter((r) => r.score > 0)
-        .sort((a, b) => b.score - a.score);
+        // Ties break on content, not on the order the filesystem returned files
+        // in and not on id -- ids are random, so an id tiebreak is only stable
+        // within a single run. Without this, the same query can rank differently
+        // on another machine, and an eval cannot be reproduced.
+        .sort((a, b) => b.score - a.score || a.m.title.localeCompare(b.m.title));
 
     const here = rank(this.all()).slice(0, limit);
     if (here.length >= limit) return here.map((r) => r.m);

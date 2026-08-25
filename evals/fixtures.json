@@ -1,0 +1,155 @@
+{
+  "_comment": "Synthetic fixtures. Deliberately not real memories: the eval is committed to a public repository, and real ones carry proprietary detail. Each scenario is a set of episodes as they would actually be recorded during work, plus the claim compaction produces from them. Keeping both lets retrieval over raw episodes be compared against retrieval over distilled claims on identical ground.",
+  "scenarios": [
+    {
+      "name": "test-environment",
+      "episodes": [
+        {
+          "title": "tests failed, 14 errors all connection refused",
+          "body": "Checked the test database config, looked correct. Ports match.",
+          "files": ["tests/conftest.py"]
+        },
+        {
+          "title": "reset the test database, still refused",
+          "body": "Dropped and recreated. Same 14 failures. Not a data problem.",
+          "files": ["tests/conftest.py"]
+        },
+        {
+          "title": "postgres container was not running",
+          "body": "docker compose up fixed every failure immediately.",
+          "files": ["docker-compose.yml"]
+        }
+      ],
+      "claim": {
+        "title": "Tests need `docker compose up` first",
+        "body": "Connection-refused failures in the test suite are almost always the missing postgres container rather than the test code or the database contents.",
+        "files": ["tests/conftest.py", "docker-compose.yml"]
+      }
+    },
+    {
+      "name": "auth-middleware-order",
+      "episodes": [
+        {
+          "title": "requests to /api/v2 are not authenticated",
+          "body": "Handlers receive no user object. Works fine on v1.",
+          "files": ["src/routes/v2.ts"]
+        },
+        {
+          "title": "v2 router registered before the auth middleware",
+          "body": "Registration order in server.ts puts the router first, so middleware never runs for those paths.",
+          "files": ["src/server.ts"]
+        },
+        {
+          "title": "moved middleware registration above the v2 router",
+          "body": "Auth now applies. Added a test asserting 401 on an unauthenticated v2 call.",
+          "files": ["src/server.ts"]
+        }
+      ],
+      "claim": {
+        "title": "Middleware must be registered before routers",
+        "body": "Anything registered after a router silently skips that middleware for its paths, so authentication is bypassed without any error. Register auth first in server.ts.",
+        "files": ["src/server.ts"]
+      }
+    },
+    {
+      "name": "package-manager",
+      "episodes": [
+        {
+          "title": "npm install fails with a lockfile mismatch",
+          "body": "Peer dependency errors and an unresolvable tree.",
+          "files": ["package.json"]
+        },
+        {
+          "title": "npm ci also fails, lockfile is not npm's",
+          "body": "There is a pnpm-lock.yaml in the root.",
+          "files": ["pnpm-lock.yaml"]
+        },
+        {
+          "title": "pnpm install works",
+          "body": "Installs cleanly. The repo has always used pnpm.",
+          "files": ["pnpm-lock.yaml"]
+        }
+      ],
+      "claim": {
+        "title": "This repo uses pnpm, not npm",
+        "body": "`npm install` fails on a lockfile mismatch because the lockfile is pnpm-lock.yaml. Use `pnpm install`.",
+        "files": ["pnpm-lock.yaml", "package.json"]
+      }
+    },
+    {
+      "name": "orm-decision",
+      "episodes": [
+        {
+          "title": "evaluated Prisma for the data layer",
+          "body": "Good ergonomics, generated types are pleasant.",
+          "files": ["docs/adr/002-data-layer.md"]
+        },
+        {
+          "title": "Prisma migrations do not fit our deploy",
+          "body": "Shadow database is not available in the deploy environment and migrate deploy assumes it.",
+          "files": ["docs/adr/002-data-layer.md"]
+        },
+        {
+          "title": "went with Kysely instead",
+          "body": "Query builder only, migrations stay hand-written SQL under migrations/.",
+          "files": ["docs/adr/002-data-layer.md", "migrations/"]
+        }
+      ],
+      "claim": {
+        "title": "We use Kysely, and rejected Prisma over migrations",
+        "body": "Prisma was rejected because its migration flow needs a shadow database that the deploy environment does not provide. Migrations are hand-written SQL under migrations/.",
+        "files": ["docs/adr/002-data-layer.md", "migrations/"]
+      }
+    },
+    {
+      "name": "flaky-clock",
+      "episodes": [
+        {
+          "title": "token expiry test fails only in CI",
+          "body": "Passes locally every time. Fails maybe one run in three on CI.",
+          "files": ["tests/auth/token.test.ts"]
+        },
+        {
+          "title": "CI machine clock is ahead of the token issuer",
+          "body": "Skew of a few seconds is enough for the expiry assertion to flip.",
+          "files": ["tests/auth/token.test.ts"]
+        },
+        {
+          "title": "froze the clock in test setup, green",
+          "body": "Used fake timers in the setup file rather than widening the tolerance.",
+          "files": ["tests/setup.ts"]
+        }
+      ],
+      "claim": {
+        "title": "Auth tests are clock-sensitive; freeze the clock in setup",
+        "body": "Intermittent CI failures in token tests are usually machine clock skew rather than logic. Freeze time in tests/setup.ts instead of loosening assertions.",
+        "files": ["tests/setup.ts", "tests/auth/token.test.ts"]
+      }
+    },
+    {
+      "name": "cache-invalidation",
+      "episodes": [
+        {
+          "title": "stale prices shown after a catalogue update",
+          "body": "Update lands in the database but the API keeps serving old values.",
+          "files": ["src/catalogue/cache.ts"]
+        },
+        {
+          "title": "redis keys are never invalidated on write",
+          "body": "Only a 15 minute TTL. Writers do not touch the cache at all.",
+          "files": ["src/catalogue/cache.ts"]
+        },
+        {
+          "title": "added explicit invalidation in the writer",
+          "body": "Delete the key in the same transaction as the write.",
+          "files": ["src/catalogue/writer.ts"]
+        }
+      ],
+      "claim": {
+        "title": "Catalogue writes must invalidate the redis key",
+        "body": "The cache has only a TTL, so a write without explicit invalidation serves stale data for up to fifteen minutes. Delete the key in the same transaction as the write.",
+        "files": ["src/catalogue/writer.ts", "src/catalogue/cache.ts"]
+      }
+    }
+  ]
+}

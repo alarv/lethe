@@ -1,0 +1,18 @@
+{"id":"env-1","scenario":"test-environment","difficulty":"easy","category":"environment","query":"tests are failing with connection refused"}
+{"id":"env-2","scenario":"test-environment","difficulty":"hard","category":"environment","query":"the suite will not run on a fresh checkout, what do I need to start first"}
+{"id":"env-3","scenario":"test-environment","difficulty":"hard","category":"environment","query":"database unreachable when running pytest locally"}
+{"id":"auth-1","scenario":"auth-middleware-order","difficulty":"easy","category":"debugging","query":"v2 routes are not authenticated"}
+{"id":"auth-2","scenario":"auth-middleware-order","difficulty":"hard","category":"debugging","query":"why would a request reach the handler without a user object attached"}
+{"id":"auth-3","scenario":"auth-middleware-order","difficulty":"hard","category":"convention","query":"what order should things be registered in server.ts"}
+{"id":"pkg-1","scenario":"package-manager","difficulty":"easy","category":"environment","query":"npm install is failing"}
+{"id":"pkg-2","scenario":"package-manager","difficulty":"hard","category":"environment","query":"how do I install dependencies in this project"}
+{"id":"pkg-3","scenario":"package-manager","difficulty":"hard","category":"environment","query":"dependency tree will not resolve, peer errors everywhere"}
+{"id":"orm-1","scenario":"orm-decision","difficulty":"easy","category":"decision","query":"why did we pick Kysely"}
+{"id":"orm-2","scenario":"orm-decision","difficulty":"hard","category":"decision","query":"can we adopt Prisma for the data layer"}
+{"id":"orm-3","scenario":"orm-decision","difficulty":"hard","category":"decision","query":"how are schema changes applied to the database here"}
+{"id":"clock-1","scenario":"flaky-clock","difficulty":"easy","category":"debugging","query":"token expiry test is flaky in CI"}
+{"id":"clock-2","scenario":"flaky-clock","difficulty":"hard","category":"debugging","query":"a test passes locally but fails intermittently on the build server"}
+{"id":"clock-3","scenario":"flaky-clock","difficulty":"hard","category":"convention","query":"should I widen the tolerance on a time based assertion"}
+{"id":"cache-1","scenario":"cache-invalidation","difficulty":"easy","category":"debugging","query":"stale prices after updating the catalogue"}
+{"id":"cache-2","scenario":"cache-invalidation","difficulty":"hard","category":"debugging","query":"api keeps serving old data even though the write succeeded"}
+{"id":"cache-3","scenario":"cache-invalidation","difficulty":"hard","category":"convention","query":"what do I need to remember when writing to the catalogue"}
