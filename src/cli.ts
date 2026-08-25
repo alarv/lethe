@@ -6,7 +6,7 @@
  * inspecting the store by hand while dogfooding.
  */
 
-import { Store, findProjectRoot, memoryDir, type Scope } from "./store.js";
+import { Store, findProjectRoot, letheHome, memoryDir, readSource, type Scope } from "./store.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
 import { existsSync, readdirSync } from "node:fs";
@@ -24,6 +24,7 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe doctor                 diagnose setup problems
   lethe status                 is it working? counts, pressure, last activity
   lethe log [-n N]             recent activity
+  lethe projects               every project with stored memory
   lethe where                  show where memory is stored
   lethe compact [--dry-run]    consolidate, promote, decay
 
@@ -174,6 +175,28 @@ async function main(): Promise<void> {
       const n = i >= 0 ? Number(rest[i + 1] ?? 40) : 40;
       const lines = tail(n);
       console.log(lines.length ? lines.join("\n") : `nothing logged yet (${LOG_PATH})`);
+      return;
+    }
+
+    case "projects": {
+      const dir = join(letheHome(), "projects");
+      if (!existsSync(dir)) {
+        console.log("no projects yet");
+        return;
+      }
+      const rows = readdirSync(dir)
+        .map((key) => {
+          const mem = join(dir, key, "memory");
+          const files = existsSync(mem) ? readdirSync(mem).filter((f) => f.endsWith(".md")) : [];
+          return { path: readSource(join(dir, key)) ?? key, n: files.length };
+        })
+        .filter((r) => r.n > 0)
+        .sort((a, b) => b.n - a.n);
+      if (!rows.length) {
+        console.log("no memories stored yet");
+        return;
+      }
+      for (const r of rows) console.log(`${String(r.n).padStart(4)}  ${r.path}`);
       return;
     }
 

@@ -18,6 +18,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -75,11 +76,41 @@ export function findProjectRoot(start = process.cwd()): string | null {
   }
 }
 
-/** Stable per-repo directory name: readable, with a hash to avoid collisions. */
-function projectKey(root: string): string {
+/**
+ * Directory name for a project's store.
+ *
+ * The full path, slugified. Using only the basename would collide -- everyone
+ * has more than one repo called `api` -- and appending a hash to the basename
+ * fixes that at the cost of being unreadable, which matters because you end up
+ * looking at these directories when something goes wrong. Encoding the whole
+ * path is unique by construction and stays legible. Same convention as
+ * ~/.claude/projects.
+ */
+export function projectKey(root: string): string {
+  return root.replace(/[^a-zA-Z0-9]+/g, "-").replace(/-+$/, "").toLowerCase();
+}
+
+/** The pre-0.1 name: basename plus a hash of the path. */
+function legacyProjectKey(root: string): string {
   const hash = createHash("sha256").update(root).digest("hex").slice(0, 8);
   const name = root.split("/").filter(Boolean).pop() ?? "project";
   return `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${hash}`;
+}
+
+/**
+ * Move a store from the old hashed name if it is still there. Renaming on read
+ * keeps existing memories reachable without asking anyone to run a migration.
+ */
+function migrate(home: string, root: string): void {
+  const from = join(home, "projects", legacyProjectKey(root));
+  const to = join(home, "projects", projectKey(root));
+  if (from === to || existsSync(to) || !existsSync(from)) return;
+  try {
+    mkdirSync(dirname(to), { recursive: true });
+    renameSync(from, to);
+  } catch {
+    // Leave the old directory alone if the move fails; nothing is lost.
+  }
 }
 
 /**
@@ -91,6 +122,33 @@ function projectKey(root: string): string {
  */
 export function letheHome(): string {
   return process.env.LETHE_HOME || join(homedir(), ".lethe");
+}
+
+/**
+ * Record which directory a store belongs to.
+ *
+ * The key is the path with separators flattened, which is readable but not
+ * reversible -- "a.arvanitidis" and "a/arvanitidis" flatten identically. Writing
+ * the original alongside means tooling can show the real path instead of
+ * guessing at one.
+ */
+function recordSource(dir: string, root: string): void {
+  try {
+    const f = join(dir, "source");
+    if (existsSync(f)) return;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(f, root + "\n", "utf8");
+  } catch {
+    // Cosmetic; never block a write on it.
+  }
+}
+
+export function readSource(dir: string): string | null {
+  try {
+    return readFileSync(join(dir, "source"), "utf8").trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 export function memoryDir(scope: Scope, cwd = process.cwd()): string {
@@ -105,7 +163,11 @@ export function memoryDir(scope: Scope, cwd = process.cwd()): string {
   // Local scope falls back to the working directory when there is no repo.
   // Throwing here made list() return empty and recall silently answer nothing --
   // the agent asked four times, got zero hits, and had no way to see why.
-  return join(home, "projects", projectKey(root ?? cwd), "memory");
+  const base = root ?? cwd;
+  migrate(home, base);
+  const dir = join(home, "projects", projectKey(base));
+  recordSource(dir, base);
+  return join(dir, "memory");
 }
 
 // ---------------------------------------------------------- serialisation

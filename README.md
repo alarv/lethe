@@ -74,10 +74,21 @@ hands the agent an id along with the memory.
 ## Memory lives in your repo, as text
 
 ```
-~/.lethe/projects/<repo>/    local    this repo, private to you   (default)
-<repo>/.lethe/memory/        team     committed, reviewed in PRs
-~/.lethe/memory/             personal you, across every repo
+~/.lethe/
+  projects/
+    -users-you-code-api/     one directory per project
+      memory/*.md            local scope: this repo, private to you  (default)
+      source                 which directory this belongs to
+  memory/*.md                personal scope: you, across every repo
+  lethe.log
+
+<repo>/.lethe/memory/*.md    team scope: committed, reviewed in PRs
 ```
+
+The project directory is the full path with separators flattened. Using just the
+folder name would collide -- everyone has more than one repo called `api` -- and a
+hash would be unique but unreadable, which matters the moment you go looking. Run
+`lethe projects` rather than reading the directory names.
 
 Nothing is written into your repository unless you ask for it. Writing to someone's
 working tree is a decision they opt into, not something they find in `git status`.
