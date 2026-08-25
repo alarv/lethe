@@ -10,8 +10,9 @@
  * not the design -- see docs/architecture.md § Embeddings.
  */
 
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   existsSync,
@@ -61,11 +62,39 @@ export interface Memory {
   provenance: string[];
   /** Set when a memory is corrected rather than deleted. */
   supersededBy: string | null;
+  /** Who recorded it. Shared memory needs attribution to be reviewable. */
+  author: string;
+  /** Set only on results borrowed from another project. */
+  fromProject?: string;
+  /** Distinct people who found it accurate. Corroboration, not a hit count. */
+  confirmedBy: string[];
 }
 
 // ---------------------------------------------------------------- locations
 
 /** Walk up to the nearest .git, so memory attaches to the repo, not the cwd. */
+/**
+ * Who is recording this.
+ *
+ * git config first, since shared memory shows up in review and should match the
+ * commit history. Resolved once: shelling out on every write would be silly.
+ */
+let cachedAuthor: string | null = null;
+export function author(cwd = process.cwd()): string {
+  if (cachedAuthor !== null) return cachedAuthor;
+  try {
+    cachedAuthor = execFileSync("git", ["config", "user.email"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    cachedAuthor = "";
+  }
+  if (!cachedAuthor) cachedAuthor = `${process.env.USER ?? "unknown"}@${hostname()}`;
+  return cachedAuthor;
+}
+
 export function findProjectRoot(start = process.cwd()): string | null {
   let dir = resolve(start);
   for (;;) {
@@ -104,10 +133,25 @@ function legacyProjectKey(root: string): string {
 function migrate(home: string, root: string): void {
   const from = join(home, "projects", legacyProjectKey(root));
   const to = join(home, "projects", projectKey(root));
-  if (from === to || existsSync(to) || !existsSync(from)) return;
+  if (from === to || !existsSync(from)) return;
   try {
-    mkdirSync(dirname(to), { recursive: true });
-    renameSync(from, to);
+    if (!existsSync(to)) {
+      mkdirSync(dirname(to), { recursive: true });
+      renameSync(from, to);
+      return;
+    }
+    // Merge rather than skip. A server running older code can recreate the old
+    // directory after the rename, and skipping would strand those memories
+    // somewhere nothing looks again.
+    const fromMem = join(from, "memory");
+    const toMem = join(to, "memory");
+    if (existsSync(fromMem)) {
+      mkdirSync(toMem, { recursive: true });
+      for (const f of readdirSync(fromMem)) {
+        if (!existsSync(join(toMem, f))) renameSync(join(fromMem, f), join(toMem, f));
+      }
+      if (!readdirSync(fromMem).length) rmSync(from, { recursive: true, force: true });
+    }
   } catch {
     // Leave the old directory alone if the move fails; nothing is lost.
   }
@@ -200,6 +244,8 @@ export function serialize(m: Memory): string {
     `salience: ${m.salience}`,
     `created: ${m.created}`,
     `updated: ${m.updated}`,
+    `author: ${m.author}`,
+    `confirmedBy: ${m.confirmedBy.join(", ")}`,
     `provenance: ${m.provenance.join(", ")}`,
     `supersededBy: ${m.supersededBy ?? ""}`,
   ].join("\n");
@@ -237,6 +283,8 @@ export function parse(text: string, scope: Scope): Memory | null {
     lastAccessed: f.lastAccessed ? f.lastAccessed : null,
     provenance: list(f.provenance),
     supersededBy: f.supersededBy ? f.supersededBy : null,
+    author: f.author ?? "",
+    confirmedBy: list(f.confirmedBy),
   };
 }
 
@@ -318,6 +366,41 @@ export class Store {
     this.dyn = new Dynamics(
       join(letheHome(), "projects", projectKey(root), "dynamics.json"),
     );
+    this.relocateEpisodes();
+  }
+
+  /**
+   * Move episodes out of the repository.
+   *
+   * Earlier versions let any memory be written to team scope, so repositories
+   * picked up private scratchpad entries that would otherwise reach a commit.
+   * Runs once per store: cheap when there is nothing to move.
+   */
+  private relocateEpisodes(): void {
+    let from: string;
+    try {
+      from = memoryDir("team", this.cwd);
+    } catch {
+      return; // not in a repository; nothing to relocate
+    }
+    if (!existsSync(from)) return;
+    let moved = 0;
+    try {
+      for (const name of readdirSync(from)) {
+        if (!name.endsWith(".md")) continue;
+        const path = join(from, name);
+        const m = parse(readFileSync(path, "utf8"), "team");
+        if (!m || m.kind !== "episode") continue;
+        const to = join(memoryDir("local", this.cwd), name);
+        mkdirSync(dirname(to), { recursive: true });
+        if (!existsSync(to)) renameSync(path, to);
+        else rmSync(path, { force: true });
+        moved += 1;
+      }
+      if (moved && !readdirSync(from).length) rmSync(from, { recursive: true, force: true });
+    } catch {
+      // Best effort; leaving them in place is not harmful, only untidy.
+    }
   }
 
   private dir(scope: Scope): string {
@@ -326,8 +409,21 @@ export class Store {
     return d;
   }
 
+  /**
+   * Where a memory belongs, decided by what it is rather than by what a caller
+   * asked for.
+   *
+   * Episodes are a private scratchpad -- verbose, numerous, and deleted by
+   * compaction -- so sharing them is what makes shared memory unusable: three
+   * hundred people's scratchpads is noise, not knowledge. Claims and patterns
+   * are what survived, and are the only things worth anyone else reading.
+   */
+  private scopeFor(m: Memory): Scope {
+    return m.kind === "episode" ? "local" : m.scope;
+  }
+
   private pathFor(m: Memory): string {
-    return join(this.dir(m.scope), `${m.id.slice(0, 8)}-${slug(m.title)}.md`);
+    return join(this.dir(this.scopeFor(m)), `${m.id.slice(0, 8)}-${slug(m.title)}.md`);
   }
 
   list(scope: Scope): Memory[] {
@@ -410,6 +506,8 @@ export class Store {
       lastAccessed: null,
       provenance: input.provenance ?? [],
       supersededBy: null,
+      author: author(this.cwd),
+      confirmedBy: [],
     });
   }
 
@@ -437,31 +535,88 @@ export class Store {
   }
 
   /**
+   * Every other project's memories.
+   *
+   * Repositories are not the same thing as problems. A service, its infra repo
+   * and its client are one system to the person working on them, and a lesson
+   * learned in one is routinely needed in another -- so when the current project
+   * has little to say, it is better to look next door than to answer nothing.
+   * Results are marked so their origin is visible rather than implied.
+   */
+  private otherProjects(): Memory[] {
+    const projects = join(letheHome(), "projects");
+    const mine = findProjectRoot(this.cwd) ?? this.cwd;
+    const out: Memory[] = [];
+    let dirs: string[];
+    try {
+      dirs = readdirSync(projects);
+    } catch {
+      return out;
+    }
+    for (const key of dirs) {
+      const source = readSource(join(projects, key));
+      if (source === mine) continue;
+      const mem = join(projects, key, "memory");
+      if (!existsSync(mem)) continue;
+      for (const name of readdirSync(mem)) {
+        if (!name.endsWith(".md")) continue;
+        try {
+          const m = parse(readFileSync(join(mem, name), "utf8"), "local");
+          if (!m) continue;
+          m.fromProject = source ?? key;
+          out.push(m);
+        } catch {
+          /* skip unreadable */
+        }
+      }
+    }
+    return out;
+  }
+
+  private score(m: Memory, tokens: string[], paths: string[]): number {
+    const title = m.title.toLowerCase();
+    const body = m.body.toLowerCase();
+    let score = 0;
+    for (const t of tokens) {
+      if (m.tags.some((tag) => tag.toLowerCase() === t)) score += 5;
+      if (title.includes(t)) score += 3;
+      if (m.files.some((f) => f.toLowerCase().includes(t))) score += 2;
+      if (body.includes(t)) score += 1;
+    }
+    if (m.kind === "claim") score *= 1.5; // distilled beats raw
+    if (m.kind === "pattern") score *= 1.5;
+    // Memories about the code in front of you are likelier to be the ones
+    // wanted. In a large repository this is the difference between every claim
+    // and the handful that are relevant.
+    if (paths.length && m.files.length) {
+      const overlap = m.files.some((f) =>
+        paths.some((p) => f.includes(p) || p.includes(f)));
+      if (overlap) score *= 2;
+    }
+    return score * m.strength;
+  }
+
+  /**
    * Placeholder retrieval: token overlap, weighted by field. Good enough to
    * start capturing real sessions; replaced by embeddings once there is data
    * to evaluate against.
    */
-  search(query: string, limit = 8): Memory[] {
+  search(query: string, limit = 8, paths: string[] = []): Memory[] {
     const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2);
-    const scored = this.all()
-      .filter((m) => !m.supersededBy)
-      .map((m) => {
-        const title = m.title.toLowerCase();
-        const body = m.body.toLowerCase();
-        let score = 0;
-        for (const t of tokens) {
-          if (m.tags.some((tag) => tag.toLowerCase() === t)) score += 5;
-          if (title.includes(t)) score += 3;
-          if (m.files.some((f) => f.toLowerCase().includes(t))) score += 2;
-          if (body.includes(t)) score += 1;
-        }
-        if (m.kind === "claim") score *= 1.5; // distilled beats raw
-        if (m.kind === "pattern") score *= 1.5;
-        return { m, score: score * m.strength };
-      })
-      .filter((r) => r.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
-    return scored.map((r) => r.m);
+    const rank = (pool: Memory[]) =>
+      pool
+        .filter((m) => !m.supersededBy)
+        .map((m) => ({ m, score: this.score(m, tokens, paths) }))
+        .filter((r) => r.score > 0)
+        .sort((a, b) => b.score - a.score);
+
+    const here = rank(this.all()).slice(0, limit);
+    if (here.length >= limit) return here.map((r) => r.m);
+
+    // Top up from neighbouring projects, discounted so anything local wins.
+    const elsewhere = rank(this.otherProjects())
+      .map((r) => ({ ...r, score: r.score * 0.5 }))
+      .slice(0, limit - here.length);
+    return [...here, ...elsewhere].map((r) => r.m);
   }
 }
