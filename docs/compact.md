@@ -48,6 +48,12 @@ Four episodes become one claim, and the episodes are deleted. The `provenance` f
 keeps the audit trail even though the source rows are gone — every claim can be traced
 to what produced it.
 
+Consumed episodes are marked superseded rather than deleted. A claim is a lossy
+summary -- it keeps the lesson and drops the exact command, path or error string
+that often made the episode worth having -- so the sources stay on disk, out of
+recall but resolvable by id. A consolidation that turns out to be too vague is
+recoverable, and a mistaken one is no longer destructive.
+
 Only episodes above the salience threshold are considered (`docs/architecture.md` §
 Salience). Most of the buffer is never consolidated and is simply dropped, which is the
 intended behaviour, not a failure.
