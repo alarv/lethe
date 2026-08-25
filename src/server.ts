@@ -24,15 +24,15 @@ import { logResolved, resolveDistiller } from "./distil.js";
 const scopeSchema = z.enum(["local", "team", "personal"]).optional()
   .describe(
     "omit to use the configured default | " +
-    "local = this repo, stored outside it, private to you | " +
-    "team = stored in the repo itself | " +
-    "personal = you, across every repo",
+    "where consolidated claims from this memory should eventually live. " +
+    "Episodes are always private to you regardless. " +
+    "team = shared via the repo (default) | local = this machine | personal = you, everywhere",
   );
 
 function render(m: Memory): string {
-  const age = m.kind === "claim" ? "claim" : m.kind === "pattern" ? "pattern" : "episode";
+  const from = m.fromProject ? ` — from ${m.fromProject}` : "";
   return [
-    `[${m.id.slice(0, 8)}] (${age}) ${m.title}`,
+    `[${m.id.slice(0, 8)}] (${m.kind})${from} ${m.title}`,
     m.body ? m.body.split("\n").map((l) => `    ${l}`).join("\n") : "",
   ].filter(Boolean).join("\n");
 }
@@ -137,12 +137,16 @@ export function createServer(cwd = process.cwd()): McpServer {
       "Returns memories with ids -- use the confirm or correct tools on them.",
     {
       query: z.string().describe("what you are trying to find out"),
+      paths: z.array(z.string()).default([])
+        .describe("files or directories you are working in; memories about them rank higher"),
       limit: z.number().int().min(1).max(25).default(8),
     },
-    async ({ query, limit }) => {
+    async ({ query, paths, limit }) => {
       await ensureBound();
-      const hits = store.search(query, limit);
-      for (const m of hits) store.touch(m);
+      const hits = store.search(query, limit, paths);
+      // Borrowed memories belong to another project; reinforcing them here
+      // would let one project's usage distort another's decay.
+      for (const m of hits) if (!m.fromProject) store.touch(m);
       log("recall", JSON.stringify(query), { hits: hits.length });
       return {
         content: [{
