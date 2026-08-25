@@ -8,13 +8,19 @@
  * for a session that can distil them. Decay still runs either way.
  */
 
-import type { Memory, Store } from "./store.js";
+import type { Memory, Scope, Store } from "./store.js";
 import { log } from "./log.js";
 
 /** Asks a model for a completion. Supplied by the MCP host via sampling. */
 export type Distiller = (prompt: string) => Promise<string>;
 
 export interface CompactOptions {
+  /**
+   * Where consolidated claims are written. Cannot be inferred from the source
+   * episodes -- those are always stored locally, so they would always say
+   * "local" and a claim could never reach the team.
+   */
+  claimScope?: Scope;
   distil?: Distiller | undefined;
   dryRun?: boolean;
   /** Also purge memories that have decayed below the cold threshold. */
@@ -209,7 +215,7 @@ export async function compact(
   store: Store,
   opts: CompactOptions = {},
 ): Promise<CompactReport> {
-  const { distil, dryRun = false, deep = false } = opts;
+  const { distil, dryRun = false, deep = false, claimScope = "local" } = opts;
   const report: CompactReport = {
     skippedNoModel: !distil && episodesWaiting(store) > 0,
     clustered: 0,
@@ -247,7 +253,7 @@ export async function compact(
 
     store.create({
       kind: "claim",
-      scope: group[0]!.scope,
+      scope: claimScope,
       title: claim.title,
       body: claim.body,
       tags: [...new Set(group.flatMap((m) => m.tags))],

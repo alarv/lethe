@@ -114,7 +114,10 @@ export function createServer(cwd = process.cwd()): McpServer {
         logResolved(resolved);
         if (!resolved) return; // episodes wait for a session that can distil
         log("compact", "pressure threshold reached", { episodes: episodes.length });
-        const r = await compact(store, { distil: resolved.distil });
+        const r = await compact(store, {
+          distil: resolved.distil,
+          claimScope: defaultScope(workspace()),
+        });
         log("compact", "done", {
           via: resolved.via,
           claims: r.claimsWritten,

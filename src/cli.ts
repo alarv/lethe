@@ -309,6 +309,7 @@ async function main(): Promise<void> {
       const resolved = await resolveDistiller();
       if (resolved) console.log(`distilling via ${resolved.via}\n`);
       const r = await compact(store, {
+        claimScope: defaultScope(),
         ...(resolved ? { distil: resolved.distil } : {}),
         dryRun: rest.includes("--dry-run"),
         deep: rest.includes("--deep"),
