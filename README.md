@@ -122,7 +122,7 @@ Point opencode at it — `~/.config/opencode/opencode.json` for every project, o
   "mcp": {
     "lethe": {
       "type": "local",
-      "command": ["node", "/absolute/path/to/lethe/dist/cli.js", "mcp"],
+      "command": ["/absolute/path/to/node", "/absolute/path/to/lethe/dist/cli.js", "mcp"],
       "enabled": true
     }
   }
@@ -145,8 +145,12 @@ If a recalled memory turns out to be wrong, fix it with `correct`.
 For **Claude Code**:
 
 ```sh
-claude mcp add lethe --scope user -- node /absolute/path/to/lethe/dist/cli.js mcp
+claude mcp add lethe --scope user -- "$(which node)" /absolute/path/to/lethe/dist/cli.js mcp
 ```
+
+Use an absolute path to `node`, not the bare name. A harness launched from Finder or a
+Dock icon does not inherit your shell `PATH`, so `node` may not resolve and the server
+fails to start with nothing to show for it.
 
 Claude Code reads `~/.claude/CLAUDE.md` rather than `AGENTS.md`; symlink one to the
 other so a single rules file serves both.
@@ -154,6 +158,7 @@ other so a single rules file serves both.
 ### Is it working?
 
 ```sh
+lethe doctor         # diagnose setup problems
 lethe status         # counts, pressure, and when each tool last fired
 lethe log -n 40      # recent activity
 ```

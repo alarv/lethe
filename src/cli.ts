@@ -19,6 +19,7 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe recall <query>         search memory
   lethe note <title> [body]    record a memory by hand
   lethe forget <id>            delete a memory
+  lethe doctor                 diagnose setup problems
   lethe status                 is it working? counts, pressure, last activity
   lethe log [-n N]             recent activity
   lethe where                  show where memory is stored
@@ -45,6 +46,63 @@ async function main(): Promise<void> {
     case "mcp":
       await serve();
       return;
+
+    case "doctor": {
+      const ok = (b: boolean) => (b ? "ok  " : "FAIL");
+      const lines = tail(500);
+      const problems: string[] = [];
+
+      const root = findProjectRoot();
+      console.log(`${ok(true)} store      ${memoryDir("local")}`);
+      if (!root) {
+        console.log(`     note       not a git repo; memory is keyed to this directory`);
+      }
+
+      const d = await resolveDistiller();
+      console.log(`${ok(!!d)} distiller  ${d ? d.via : "none"}`);
+      if (!d) {
+        problems.push(
+          "No model available, so consolidation cannot run and episodes will\n" +
+          "  accumulate. Install opencode or claude, or set LETHE_API_KEY.",
+        );
+      }
+
+      const lastStart = [...lines].reverse().find((l) => l.includes(" start "));
+      const stale = lastStart && !lastStart.includes(`build=${buildStamp()}`);
+      console.log(`${ok(!stale)} build      ${stale ? "running server is older than the built code" : "current"}`);
+      if (stale) {
+        problems.push("Start a new session; the server is spawned per session and yours predates the last build.");
+      }
+
+      const notes = lines.filter((l) => l.includes(" note ")).length;
+      const recalls = lines.filter((l) => l.includes(" recall ")).length;
+      console.log(`${ok(notes > 0)} writing    ${notes} note(s) recorded`);
+      if (!notes) {
+        problems.push(
+          "Nothing has been recorded. Either the harness never started the\n" +
+          "  server, or nothing tells the agent to use it -- check that your\n" +
+          "  AGENTS.md or CLAUDE.md mentions lethe.",
+        );
+      }
+      console.log(`${ok(recalls > 0)} reading    ${recalls} recall(s)`);
+      if (notes > 0 && recalls === 0) {
+        problems.push("Memories are being written but never read back. The rules file needs to push recall before investigating.");
+      }
+
+      const stores = [...new Set(lines.filter((l) => l.includes(" start ")).map((l) => /store=(\S+)/.exec(l)?.[1]).filter(Boolean))];
+      if (stores.length > 1) {
+        console.log(`WARN split      ${stores.length} different stores seen in the log`);
+        problems.push("Sessions have used different stores, so memories written in one are invisible in another:\n  " + stores.join("\n  "));
+      }
+
+      if (!problems.length) {
+        console.log("\nNo problems found.");
+        return;
+      }
+      console.log("");
+      for (const p of problems) console.log(`- ${p}`);
+      return;
+    }
 
     case "status": {
       const all = store.all();
