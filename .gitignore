@@ -24,3 +24,6 @@ assets/*.tmp.png
 
 # lethe memories stay on this machine; config.json is shared
 .lethe/memory/
+
+# Session handoff note, not part of the project.
+docs/lethe.md
