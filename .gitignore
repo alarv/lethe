@@ -27,3 +27,9 @@ assets/*.tmp.png
 
 # Session handoff note, not part of the project.
 docs/lethe.md
+
+# Design specs. Internal working documents -- they argue with themselves,
+# name unbuilt work, and record rejected options, none of which reads well
+# to someone finding the repository. The decisions that matter get written
+# up in docs/ and in commit messages instead.
+docs/superpowers/
