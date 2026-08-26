@@ -135,9 +135,13 @@ export function createServer(cwd = process.cwd()): McpServer {
 
   server.tool(
     "recall",
-    "Search memory for anything already known about this task, codebase, or problem. " +
-      "Call this BEFORE investigating something that may have been solved before. " +
-      "Returns memories with ids -- use the confirm or correct tools on them.",
+    "Retrieve what is already known about this codebase before working. Call this " +
+      "FIRST, unprompted, at the start of any task and whenever you hit something " +
+      "non-obvious: a failing test or build, an unfamiliar file, a setup or config " +
+      "problem, a 'why is it done this way' question, or an error you have not seen " +
+      "here before. It is cheap and usually saves rediscovering something already " +
+      "solved. Do not wait to be asked. Returns memories with ids -- use confirm or " +
+      "correct on them.",
     {
       query: z.string().describe("what you are trying to find out"),
       paths: z.array(z.string()).default([])

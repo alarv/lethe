@@ -10,7 +10,7 @@ import { Store, findProjectRoot, letheHome, memoryDir, readSource, type Scope } 
 import { defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, writeConfig } from "./config.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LOG_PATH, buildStamp, tail } from "./log.js";
 import { describeDistiller, resolveDistiller } from "./distil.js";
@@ -24,6 +24,7 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe forget <id>            delete a memory
   lethe doctor                 diagnose setup problems
   lethe restart                stop running servers (harness respawns them)
+  lethe rules                  append the memory instructions to AGENTS.md
   lethe status                 is it working? counts, pressure, last activity
   lethe log [-n N]             recent activity
   lethe init [--private]       set up memory for this project
@@ -53,6 +54,37 @@ async function main(): Promise<void> {
     case "mcp":
       await serve();
       return;
+
+    case "rules": {
+      // The tool descriptions carry the "when to call" guidance to every host,
+      // but a project with its own AGENTS.md overrides the global one, so the
+      // reminder to use memory at all can go missing exactly where it is needed.
+      const root = findProjectRoot();
+      const target = root ? join(root, "AGENTS.md") : null;
+      if (!target) {
+        console.error("not inside a git repository");
+        process.exit(1);
+      }
+      const block = [
+        "",
+        "## Memory (lethe)",
+        "",
+        "Before investigating anything non-trivial, call lethe's `recall` first — a",
+        "failing test, a build error, an unfamiliar area, a setup problem. It may",
+        "already be solved. When you learn something durable, record it with `note`.",
+        "If a recalled memory is wrong, fix it with `correct`; if it was right and",
+        "useful, `confirm` it.",
+        "",
+      ].join("\n");
+      const current = existsSync(target) ? readFileSync(target, "utf8") : "";
+      if (current.includes("## Memory (lethe)")) {
+        console.log(`${target} already has the lethe section.`);
+        return;
+      }
+      writeFileSync(target, current + block, "utf8");
+      console.log(`appended the lethe section to ${target}`);
+      return;
+    }
 
     case "restart": {
       // MCP servers are per-session children of the harness; killing them makes
