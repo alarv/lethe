@@ -55,3 +55,11 @@ they discover in `git status`.
 
 You have lethe tools available. Use them here too — this repo is the first place
 the thing should prove useful.
+
+## Memory (lethe)
+
+Before investigating anything non-trivial, call lethe's `recall` first — a
+failing test, a build error, an unfamiliar area, a setup problem. It may
+already be solved. When you learn something durable, record it with `note`.
+If a recalled memory is wrong, fix it with `correct`; if it was right and
+useful, `confirm` it.
