@@ -245,7 +245,6 @@ export function serialize(m: Memory): string {
     `created: ${m.created}`,
     `updated: ${m.updated}`,
     `author: ${m.author}`,
-    `confirmedBy: ${m.confirmedBy.join(", ")}`,
     `provenance: ${m.provenance.join(", ")}`,
     `supersededBy: ${m.supersededBy ?? ""}`,
   ].join("\n");
@@ -284,7 +283,7 @@ export function parse(text: string, scope: Scope): Memory | null {
     provenance: list(f.provenance),
     supersededBy: f.supersededBy ? f.supersededBy : null,
     author: f.author ?? "",
-    confirmedBy: list(f.confirmedBy),
+    confirmedBy: [], // merged in from the sidecar on read
   };
 }
 
@@ -301,6 +300,8 @@ interface Dyn {
   accessCount: number;
   lastAccessed: string | null;
   decayedAt: string;
+  /** Distinct people who confirmed this on this machine. */
+  confirmedBy?: string[];
 }
 
 /**
@@ -333,6 +334,7 @@ class Dynamics {
       accessCount: 0,
       lastAccessed: null,
       decayedAt: created,
+      confirmedBy: [],
     };
   }
 
@@ -438,7 +440,9 @@ export class Store {
       if (!name.endsWith(".md")) continue;
       const m = parse(readFileSync(join(dir, name), "utf8"), scope);
       if (!m) continue;
-      Object.assign(m, this.dyn.get(m.id, m.created));
+      const d = this.dyn.get(m.id, m.created);
+      Object.assign(m, d);
+      m.confirmedBy = d.confirmedBy ?? [];
       out.push(m);
     }
     return out;
@@ -531,7 +535,25 @@ export class Store {
       accessCount: m.accessCount,
       lastAccessed: m.lastAccessed,
       decayedAt: m.decayedAt,
+      confirmedBy: m.confirmedBy,
     });
+  }
+
+  /**
+   * Record that someone found a memory accurate. Corroboration, not a counter:
+   * the same person confirming twice is one voice, three different people is
+   * team knowledge (docs/architecture.md § Attribution). Returns the distinct
+   * count so a caller can act on it.
+   */
+  confirm(m: Memory, who: string): number {
+    const set = new Set(m.confirmedBy);
+    set.add(who);
+    m.confirmedBy = [...set];
+    m.strength = Math.min(2, m.strength + 0.4);
+    m.accessCount += 1;
+    m.lastAccessed = new Date().toISOString();
+    this.saveDynamics(m);
+    return m.confirmedBy.length;
   }
 
   /**

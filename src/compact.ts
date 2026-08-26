@@ -59,6 +59,8 @@ const PROMOTE_MIN_EVIDENCE = 2;
  * you cannot learn a habit from one telling).
  */
 const PROMOTE_MIN_ACCESS = 3;
+/** Distinct confirmers that make a claim team knowledge rather than one view. */
+const PROMOTE_MIN_CONFIRMERS = 2;
 const SIMILARITY = 0.12;
 /**
  * A consolidated claim has to still be about one thing. Beyond a handful of
@@ -337,12 +339,17 @@ export async function compact(
   }
 
   // 2. Promote ---------------------------------------------------------------
-  // A claim repeatedly corroborated stops being a fact and becomes how we do
-  // things here. Recurrence is required: you cannot learn a habit from one telling.
+  // A claim becomes procedural -- how we do things here -- once it has earned
+  // trust, by one of two routes: sustained personal use (recalled repeatedly),
+  // or corroboration by several different people. The second matters more for a
+  // team: a claim three colleagues independently confirmed is settled in a way
+  // that one person leaning on it is not.
   for (const m of store.all()) {
     if (m.kind !== "claim" || m.supersededBy) continue;
     if (m.provenance.length < PROMOTE_MIN_EVIDENCE) continue;
-    if (m.accessCount < PROMOTE_MIN_ACCESS) continue;
+    const corroborated = m.confirmedBy.length >= PROMOTE_MIN_CONFIRMERS;
+    const relied = m.accessCount >= PROMOTE_MIN_ACCESS;
+    if (!corroborated && !relied) continue;
     report.promoted += 1;
     report.changes.push(`promote -> pattern: "${m.title}"`);
     if (dryRun) continue;

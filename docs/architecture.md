@@ -115,10 +115,15 @@ project's usage should not distort another's decay.
 
 ### Attribution
 
-Every memory records an `author`, taken from `git config user.email`, and `confirmedBy`
-accumulates the distinct people who found it accurate. A claim three people independently
-confirmed is team knowledge; a claim one person wrote once is a hypothesis. Shared memory
-that shows up in review needs to say who learned it.
+Every memory records an `author`, taken from `git config user.email`. Confirmations
+accumulate the distinct people who found it accurate -- the same person confirming twice
+is one voice, not two -- and a claim corroborated by several people is promoted to a
+pattern, because a claim three colleagues independently confirmed is settled in a way one
+person leaning on it is not.
+
+Confirmations live in the per-machine sidecar, not the committed file, for the same
+reason strength does: corroboration aggregates across machines and writing it into shared
+frontmatter would bring back the churn that keeping dynamics local removed.
 
 ### Why the database is not the source of truth
 

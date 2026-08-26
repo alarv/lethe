@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Store, memoryDir, type Memory, type Scope } from "./store.js";
+import { Store, author, memoryDir, type Memory, type Scope } from "./store.js";
 import { defaultScope } from "./config.js";
 import { compact, type Distiller } from "./compact.js";
 import { buildStamp, log } from "./log.js";
