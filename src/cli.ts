@@ -23,6 +23,7 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe note <title> [body]    record a memory by hand
   lethe forget <id>            delete a memory
   lethe doctor                 diagnose setup problems
+  lethe restart                stop running servers (harness respawns them)
   lethe status                 is it working? counts, pressure, last activity
   lethe log [-n N]             recent activity
   lethe init [--private]       set up memory for this project
@@ -52,6 +53,28 @@ async function main(): Promise<void> {
     case "mcp":
       await serve();
       return;
+
+    case "restart": {
+      // MCP servers are per-session children of the harness; killing them makes
+      // the harness spawn fresh ones on its next call. This exists because a
+      // rebuild does not reach a running server, and stale servers have
+      // repeatedly caused bugs that look like data loss.
+      const { execFileSync } = await import("node:child_process");
+      let out = "";
+      try {
+        out = execFileSync("pgrep", ["-f", "lethe/dist/cli.js mcp"], { encoding: "utf8" });
+      } catch {
+        console.log("no lethe servers running");
+        return;
+      }
+      const pids = out.split("\n").map((l) => l.trim()).filter(Boolean)
+        .filter((pid) => pid !== String(process.pid));
+      for (const pid of pids) {
+        try { process.kill(Number(pid)); } catch { /* already gone */ }
+      }
+      console.log(`stopped ${pids.length} server(s). Your harness will spawn a fresh one.`);
+      return;
+    }
 
     case "doctor": {
       const ok = (b: boolean) => (b ? "ok  " : "FAIL");
