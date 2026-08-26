@@ -181,7 +181,7 @@ function recordSource(dir: string, root: string): void {
     const f = join(dir, "source");
     if (existsSync(f)) return;
     mkdirSync(dir, { recursive: true });
-    writeFileSync(f, root + "\n", "utf8");
+    atomicWrite(f, root + "\n");
   } catch {
     // Cosmetic; never block a write on it.
   }
@@ -289,6 +289,20 @@ export function parse(text: string, scope: Scope): Memory | null {
 
 // ----------------------------------------------------------------- storage
 
+/**
+ * Write via a temp sibling and rename.
+ *
+ * rename(2) is atomic on the same filesystem, so a concurrent reader sees either
+ * the old file or the new one, never a half-written one -- and two servers
+ * racing on the same path cannot interleave. Different sessions spawn different
+ * servers, so this is not hypothetical.
+ */
+function atomicWrite(file: string, data: string): void {
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  writeFileSync(tmp, data, "utf8");
+  renameSync(tmp, file);
+}
+
 function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) ||
     "memory";
@@ -343,7 +357,11 @@ class Dynamics {
     this.data[id] = d;
     try {
       mkdirSync(dirname(this.file), { recursive: true });
-      writeFileSync(this.file, JSON.stringify(this.data, null, 0), "utf8");
+      // Re-read before writing: another server may have recorded a confirmation
+      // since we loaded, and a blind overwrite would drop it. Merge confirmer
+      // lists rather than clobbering.
+      this.mergeExternal();
+      atomicWrite(this.file, JSON.stringify(this.data, null, 0));
     } catch {
       // Losing reinforcement is survivable; failing a recall is not.
     }
@@ -353,9 +371,32 @@ class Dynamics {
     this.load();
     delete this.data[id];
     try {
-      writeFileSync(this.file, JSON.stringify(this.data, null, 0), "utf8");
+      atomicWrite(this.file, JSON.stringify(this.data, null, 0));
     } catch {
       /* ignore */
+    }
+  }
+
+  /** Fold in confirmations another process wrote since we loaded. */
+  private mergeExternal(): void {
+    let disk: Record<string, Dyn>;
+    try {
+      disk = JSON.parse(readFileSync(this.file, "utf8")) as Record<string, Dyn>;
+    } catch {
+      return;
+    }
+    for (const [id, d] of Object.entries(disk)) {
+      const mine = this.data[id];
+      if (!mine) {
+        this.data[id] = d;
+        continue;
+      }
+      const union = new Set([...(mine.confirmedBy ?? []), ...(d.confirmedBy ?? [])]);
+      mine.confirmedBy = [...union];
+      // Keep the stronger view and the more recent access; these are monotonic
+      // enough that max is the right merge.
+      mine.accessCount = Math.max(mine.accessCount, d.accessCount);
+      mine.strength = Math.max(mine.strength, d.strength);
     }
   }
 }
@@ -469,7 +510,7 @@ export class Store {
   }
 
   write(m: Memory): Memory {
-    writeFileSync(this.pathFor(m), serialize(m), "utf8");
+    atomicWrite(this.pathFor(m), serialize(m));
     this.saveDynamics(m);
     return m;
   }
