@@ -29,8 +29,11 @@
   },
   "files": [
     "dist",
-    "docs",
-    "!docs/competition.md",
+    "docs/api-design.md",
+    "docs/architecture.md",
+    "docs/brain.md",
+    "docs/compact.md",
+    "docs/evals.md",
     "README.md",
     "LICENSE"
   ],
