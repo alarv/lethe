@@ -168,10 +168,27 @@ the model your agent already has; the CI path needs its own key, so it is opt-in
 > index; on anything older retrieval falls back to a simpler scorer rather than failing.
 
 ```sh
+npx @alarv/lethe doctor        # no install; checks your setup
+npm i -g @alarv/lethe          # or install the `lethe` command
+```
+
+Using `npx` in the MCP config below means the harness always runs the published
+version. That matters more than it sounds: MCP servers are long-lived child processes, so
+a server started from a local checkout keeps serving the code it started with, and
+`npx` sidesteps the class of confusion that causes.
+
+<details>
+<summary>From a checkout instead</summary>
+
+```sh
 git clone https://github.com/alarv/lethe.git && cd lethe
 npm install && npm run build
 npm link          # puts `lethe` on your PATH
 ```
+
+Then point the MCP config at `<checkout>/dist/cli.js` rather than `npx`, and run
+`lethe restart` after every rebuild — a running server will not pick it up otherwise.
+</details>
 
 Point opencode at it — `~/.config/opencode/opencode.json` for every project, or
 `opencode.json` in a repo for just that one:
@@ -182,7 +199,7 @@ Point opencode at it — `~/.config/opencode/opencode.json` for every project, o
   "mcp": {
     "lethe": {
       "type": "local",
-      "command": ["/absolute/path/to/node", "/absolute/path/to/lethe/dist/cli.js", "mcp"],
+      "command": ["npx", "-y", "@alarv/lethe", "mcp"],
       "enabled": true
     }
   }
@@ -205,12 +222,20 @@ If a recalled memory turns out to be wrong, fix it with `correct`.
 For **Claude Code**:
 
 ```sh
-claude mcp add lethe --scope user -- "$(which node)" /absolute/path/to/lethe/dist/cli.js mcp
+claude mcp add lethe --scope user -- npx -y @alarv/lethe mcp
 ```
 
-Use an absolute path to `node`, not the bare name. A harness launched from Finder or a
-Dock icon does not inherit your shell `PATH`, so `node` may not resolve and the server
-fails to start with nothing to show for it.
+If the server fails to start with nothing to show for it, `PATH` is the usual cause: a
+harness launched from Finder or a Dock icon does not inherit your shell environment, so
+`npx` may not resolve. Give an absolute path to it in that case — `lethe doctor` reports
+what it can see.
+
+Then wire up automatic recall, which is the step that actually determines whether any of
+this gets used:
+
+```sh
+lethe hook show      # prints the UserPromptSubmit config to add
+```
 
 Claude Code reads `~/.claude/CLAUDE.md` rather than `AGENTS.md`; symlink one to the
 other so a single rules file serves both.
