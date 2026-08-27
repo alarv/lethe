@@ -7,7 +7,7 @@
  */
 
 import { Store, findProjectRoot, letheHome, memoryDir, readSource, type Scope } from "./store.js";
-import { formatMetrics, metrics, readLog } from "./metrics.js";
+import { composition, formatComposition, formatMetrics, metrics, readLog } from "./metrics.js";
 import { promptHook } from "./hook.js";
 import { defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, writeConfig } from "./config.js";
 import { serve } from "./server.js";
@@ -130,6 +130,7 @@ whether this is what moved adoption.`);
 
     case "metrics": {
       console.log(formatMetrics(metrics(readLog())));
+      console.log(formatComposition(composition(store.all())));
       return;
     }
 

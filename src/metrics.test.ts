@@ -105,3 +105,59 @@ test("says so when nothing is driving recall but the model", () => {
   assert.equal(m.recallsViaHook, 0);
   assert.match(formatMetrics(m), /lethe hook show/);
 });
+
+import { composition, formatComposition } from "./metrics.js";
+
+const m2 = (kind: string, supersededBy: string | null = null) => ({ kind, supersededBy });
+
+test("composition separates live from cold and counts pressure", () => {
+  const c = composition([
+    m2("claim"), m2("pattern"),
+    m2("episode"), m2("episode"),
+    m2("episode", "claim-1"),
+  ]);
+  assert.equal(c.claims, 1);
+  assert.equal(c.patterns, 1);
+  assert.equal(c.episodes, 3, "cold episodes are still episodes");
+  assert.equal(c.cold, 1);
+  assert.equal(c.waiting, 2, "pressure counts only unconsolidated episodes");
+});
+
+// The state that went unnoticed for weeks: recall serving raw session
+// transcripts because consolidation had produced nothing.
+test("says plainly when nothing has been distilled", () => {
+  const out = formatComposition(composition([m2("episode"), m2("episode")]));
+  assert.match(out, /nothing distilled/);
+  assert.match(out, /raw sessions/);
+});
+
+test("flags a store that is mostly raw", () => {
+  const memories = [m2("claim"), ...Array.from({ length: 20 }, () => m2("episode"))];
+  assert.match(formatComposition(composition(memories)), /mostly raw/);
+});
+
+test("a healthy ratio is not flagged", () => {
+  const memories = [m2("claim"), m2("claim"), m2("episode"), m2("episode")];
+  const out = formatComposition(composition(memories));
+  assert.doesNotMatch(out, /mostly raw|nothing distilled/);
+});
+
+test("compaction outcomes are counted from the log", () => {
+  const m = metrics([
+    line("2026-01-01T00:00:00Z", "start", "connected  build=b1"),
+    line("2026-01-01T00:01:00Z", "compact", "pressure threshold reached  episodes=12"),
+    line("2026-01-01T00:02:00Z", "compact", "done (extractive)  claims=1 consumed=12"),
+    line("2026-01-01T00:03:00Z", "compact", "rejected nonconforming reply: blah"),
+  ]);
+  assert.equal(m.compactions, 1, "one run produced a claim");
+  assert.equal(m.compactionsFailed, 1);
+  assert.match(formatMetrics(m), /compaction runs/);
+});
+
+test("a run producing zero claims is not counted as a success", () => {
+  const m = metrics([
+    line("2026-01-01T00:00:00Z", "start", "connected  build=b1"),
+    line("2026-01-01T00:02:00Z", "compact", "done  claims=0 consumed=0"),
+  ]);
+  assert.equal(m.compactions, 0);
+});

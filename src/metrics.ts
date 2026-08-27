@@ -38,6 +38,10 @@ export interface Metrics {
    * never as a rate.
    */
   confirmedAfterRecall: number;
+  /** Compaction runs that produced at least one claim. */
+  compactions: number;
+  /** Compaction attempts that produced nothing, e.g. a rejected distiller reply. */
+  compactionsFailed: number;
   /** Builds seen running. More than one means stale servers are still serving. */
   builds: string[];
 }
@@ -72,6 +76,7 @@ export function metrics(lines: string[]): Metrics {
   const sessions: { used: boolean; recalled: boolean; recalledAny: boolean }[] = [];
   let recalls = 0, recallsViaHook = 0, notes = 0, confirms = 0, corrections = 0, emptyRecalls = 0;
   let hitTotal = 0, hitCount = 0, confirmedAfterRecall = 0;
+  let compactions = 0, compactionsFailed = 0;
   const builds = new Set<string>();
 
   for (const e of entries) {
@@ -114,6 +119,11 @@ export function metrics(lines: string[]): Metrics {
       case "correct":
         corrections += 1;
         break;
+      case "compact":
+        // The log records several lines per run; count outcomes, not chatter.
+        if (/\bclaims=([1-9]\d*)/.test(e.rest)) compactions += 1;
+        else if (/^rejected/.test(e.rest)) compactionsFailed += 1;
+        break;
     }
   }
 
@@ -130,8 +140,63 @@ export function metrics(lines: string[]): Metrics {
     emptyRecalls,
     meanHits: hitCount ? hitTotal / hitCount : 0,
     confirmedAfterRecall,
+    compactions,
+    compactionsFailed,
     builds: [...builds].sort(),
   };
+}
+
+/**
+ * What consolidation has actually produced.
+ *
+ * The ratio that matters, and the one nobody was looking at: the store was 32
+ * episodes to 3 claims for weeks, which means recall was serving raw session
+ * transcripts and the distilled memory the project exists to produce barely
+ * existed. Derived from the store rather than the log, because the log records
+ * that compaction ran, not what survived.
+ */
+export interface Composition {
+  episodes: number;
+  claims: number;
+  patterns: number;
+  cold: number;
+  /** Unconsolidated episodes, i.e. what pressure is measured against. */
+  waiting: number;
+}
+
+export function composition(
+  memories: { kind: string; supersededBy: string | null }[],
+): Composition {
+  const live = (kind: string) =>
+    memories.filter((m) => m.kind === kind && !m.supersededBy).length;
+  return {
+    episodes: memories.filter((m) => m.kind === "episode").length,
+    claims: live("claim"),
+    patterns: live("pattern"),
+    cold: memories.filter((m) => m.supersededBy).length,
+    waiting: live("episode"),
+  };
+}
+
+export function formatComposition(c: Composition, threshold = 12): string {
+  const distilled = c.claims + c.patterns;
+  const lines = ["", "consolidation — what the index actually has to serve"];
+  const row = (label: string, value: string, note = "") =>
+    lines.push(`  ${label.padEnd(26)} ${value.padStart(9)}   ${note}`);
+
+  row("claims + patterns", String(distilled));
+  row("episodes", String(c.episodes), `${c.cold} of them cold`);
+  row(
+    "distilled per episode",
+    c.episodes ? (distilled / c.episodes).toFixed(2) : "n/a",
+    distilled === 0
+      ? "<- nothing distilled; recall serves raw sessions"
+      : distilled / c.episodes < 0.2
+        ? "<- mostly raw"
+        : "",
+  );
+  row("pressure", `${c.waiting}/${threshold}`, c.waiting >= threshold ? "compaction due" : "");
+  return lines.join("\n");
 }
 
 function pct(n: number, of: number): string {
@@ -162,6 +227,13 @@ export function formatMetrics(m: Metrics): string {
   row("notes", String(m.notes));
   row("recalls per note", m.notes ? (m.recalls / m.notes).toFixed(2) : "n/a",
     m.notes && m.recalls / m.notes < 1 ? "<- backwards" : "");
+
+  lines.push("");
+  lines.push("consolidation");
+  row("compaction runs", String(m.compactions),
+    m.compactions === 0 ? "<- never produced a claim" : "");
+  row("rejected replies", String(m.compactionsFailed),
+    m.compactionsFailed > m.compactions ? "<- the distiller fails more than it succeeds" : "");
 
   lines.push("");
   lines.push("retrieval");
