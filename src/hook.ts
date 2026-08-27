@@ -72,6 +72,13 @@ const MIN_TERM_COVERAGE = 2;
  * for admission rather than for ranking.
  */
 const RARE_TERM_FRACTION = 0.25;
+/**
+ * Strength added per hook-injected memory.
+ *
+ * A fifth of what an explicit recall adds (0.1), because a hook firing on every
+ * prompt is much weaker evidence of usefulness than a model choosing to ask.
+ */
+const HOOK_REINFORCEMENT = 0.02;
 
 interface HookInput {
   prompt?: string;
@@ -244,6 +251,19 @@ export async function promptHook(): Promise<void> {
       via: "hook",
     });
     if (!found.length) return;
+
+    // Reinforce, but weakly. Retrieval is potentiation (docs/brain.md 5) and
+    // this hook is now the main source of retrieval, so without it accessCount
+    // never moves and frequency-driven consolidation can never fire.
+    //
+    // Weakly, because the evidence is weaker: an explicit recall means the model
+    // decided it wanted memory, while this fired whether or not memory was
+    // wanted. Matching a prompt is not the same as having helped, and
+    // reinforcing both equally would push everything to maximum strength and
+    // stop strength ordering anything.
+    for (const m of found) {
+      if (!m.fromProject) store.touch(m, HOOK_REINFORCEMENT);
+    }
 
     const rendered = renderMemories(found);
     if (rendered) process.stdout.write(`${rendered}\n`);

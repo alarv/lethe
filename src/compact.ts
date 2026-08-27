@@ -160,6 +160,60 @@ Episodes:
 `;
 
 /**
+ * Distilling one episode is a different job from distilling several.
+ *
+ * With several, the work is generalisation -- find what is invariant and discard
+ * what belonged to any one of them. With one there is nothing to generalise
+ * across, so the work is compression: keep the lesson, drop the narration. The
+ * multi-episode prompt asks for what is "INVARIANT across them", which is
+ * incoherent for a single source and produced SKIP when tried.
+ */
+const PROMPT_SINGLE = `You are consolidating an AI coding agent's memory of one codebase.
+
+Below is one episode recorded during work. Compress it into the durable lesson it
+contains -- what will still be true next month -- and state it as one claim a
+future agent can act on.
+
+Rules:
+- One claim. If the episode contains no durable lesson, say exactly: SKIP
+- Lead with the rule, not the story. "Tests need docker compose up first", not
+  "we spent time debugging tests".
+- Reproduce commands, paths, environment variables and error strings EXACTLY as
+  written. A lesson whose command has been paraphrased cannot be found again.
+- Drop what was incidental: timings, dead ends that led nowhere, narration.
+- No preamble, no commentary, no tool use. Do not explain what you are doing.
+- Your entire reply is the memory itself: a title line, a blank line, then 1-3
+  lines of body. Nothing before the title.
+
+Episode:
+`;
+
+/**
+ * An episode significant enough to distil with no similar sibling.
+ *
+ * Clustering alone cannot consolidate a store like this one. It requires two
+ * topically similar episodes, and a productive session produces notes on
+ * unrelated things -- an npm packaging trap, a rejected design, a measurement.
+ * Five useful memories with no overlap never cluster, so they stay raw forever
+ * however high the pressure threshold climbs. Measured: 32 episodes, 3 claims.
+ *
+ * docs/brain.md 4 says replay is selective, and selects on significance rather
+ * than on repetition: "Events tagged as significant -- reward, surprise,
+ * emotional salience -- are replayed preferentially." A single significant
+ * event does consolidate in biology. Requiring a topical twin was the less
+ * faithful reading.
+ *
+ * Two routes in, matching the two signals available: it has been retrieved
+ * repeatedly, or it was recorded as significant in the first place.
+ */
+const SOLO_MIN_ACCESS = 2;
+const SOLO_MIN_SALIENCE = 0.8;
+
+function worthDistillingAlone(m: Memory): boolean {
+  return m.accessCount >= SOLO_MIN_ACCESS || m.salience >= SOLO_MIN_SALIENCE;
+}
+
+/**
  * Agent CLIs are the fallback distiller, and an agent narrates: it announces
  * which tool it intends to use, or prefaces the answer with "Let me...". That
  * text is not a memory, and storing it as one is worse than storing nothing.
@@ -188,7 +242,8 @@ async function distilGroup(
 
   let reply: string;
   try {
-    reply = (await distil(PROMPT + episodes)).trim();
+    const prompt = group.length === 1 ? PROMPT_SINGLE : PROMPT;
+    reply = (await distil(prompt + episodes)).trim();
   } catch (err) {
     log("error", `distil failed: ${err instanceof Error ? err.message : String(err)}`);
     return null; // the model failed; leave the episodes alone
@@ -285,7 +340,9 @@ export async function compact(
   // distil them.
   const episodes = store.all().filter((m) => m.kind === "episode" && !m.supersededBy);
   for (const group of distil ? cluster(episodes) : []) {
-    if (group.length < 2) continue; // one episode is not yet a lesson
+    // One episode is not yet a lesson -- unless it has proven to be one, by
+    // being retrieved repeatedly or by having been recorded as significant.
+    if (group.length < 2 && !worthDistillingAlone(group[0]!)) continue;
     report.clustered += 1;
 
     const claim = await distilGroup(group, distil!);
