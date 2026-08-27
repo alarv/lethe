@@ -160,12 +160,14 @@ export interface Composition {
   claims: number;
   patterns: number;
   cold: number;
-  /** Unconsolidated episodes, i.e. what pressure is measured against. */
+  /** Unconsolidated episodes. */
   waiting: number;
+  /** Salience summed over unconsolidated episodes: what pressure actually is. */
+  pressure: number;
 }
 
 export function composition(
-  memories: { kind: string; supersededBy: string | null }[],
+  memories: { kind: string; supersededBy: string | null; salience?: number }[],
 ): Composition {
   const live = (kind: string) =>
     memories.filter((m) => m.kind === kind && !m.supersededBy).length;
@@ -175,10 +177,13 @@ export function composition(
     patterns: live("pattern"),
     cold: memories.filter((m) => m.supersededBy).length,
     waiting: live("episode"),
+    pressure: memories
+      .filter((m) => m.kind === "episode" && !m.supersededBy)
+      .reduce((sum, m) => sum + (m.salience ?? 0), 0),
   };
 }
 
-export function formatComposition(c: Composition, threshold = 12): string {
+export function formatComposition(c: Composition, threshold = 6): string {
   const distilled = c.claims + c.patterns;
   const lines = ["", "consolidation — what the index actually has to serve"];
   const row = (label: string, value: string, note = "") =>
@@ -195,7 +200,13 @@ export function formatComposition(c: Composition, threshold = 12): string {
         ? "<- mostly raw"
         : "",
   );
-  row("pressure", `${c.waiting}/${threshold}`, c.waiting >= threshold ? "compaction due" : "");
+  // Salience, not headcount -- the same number the server acts on. Reporting a
+  // count here while the trigger used salience gave two answers for one thing.
+  row(
+    "pressure",
+    `${c.pressure.toFixed(1)}/${threshold}`,
+    `salience across ${c.waiting} raw` + (c.pressure >= threshold ? " — compaction due" : ""),
+  );
   return lines.join("\n");
 }
 

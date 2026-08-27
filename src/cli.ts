@@ -8,6 +8,12 @@
 
 import { Store, findProjectRoot, letheHome, memoryDir, readSource, type Scope } from "./store.js";
 import { composition, formatComposition, formatMetrics, metrics, readLog } from "./metrics.js";
+
+/** Mirrors the server's threshold, so status and metrics agree with the trigger. */
+function pressureThreshold(): number {
+  const n = Number(process.env.LETHE_PRESSURE);
+  return Number.isFinite(n) && n > 0 ? n : 6;
+}
 import { promptHook } from "./hook.js";
 import { defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, writeConfig } from "./config.js";
 import { serve } from "./server.js";
@@ -130,7 +136,7 @@ whether this is what moved adoption.`);
 
     case "metrics": {
       console.log(formatMetrics(metrics(readLog())));
-      console.log(formatComposition(composition(store.all())));
+      console.log(formatComposition(composition(store.all()), pressureThreshold()));
       return;
     }
 
@@ -246,7 +252,7 @@ whether this is what moved adoption.`);
       const last = (e: string) => [...lines].reverse().find((l) => l.includes(` ${e} `));
 
       console.log(`memories   ${all.length}  (${episodes} episode, ${by("claim")} claim, ${by("pattern")} pattern)`);
-      const threshold = Number(process.env.LETHE_PRESSURE) > 0 ? Number(process.env.LETHE_PRESSURE) : 6;
+      const threshold = pressureThreshold();
       const pressure = store.all()
         .filter((m) => m.kind === "episode" && !m.supersededBy)
         .reduce((sum, m) => sum + m.salience, 0);

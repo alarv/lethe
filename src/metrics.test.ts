@@ -108,7 +108,8 @@ test("says so when nothing is driving recall but the model", () => {
 
 import { composition, formatComposition } from "./metrics.js";
 
-const m2 = (kind: string, supersededBy: string | null = null) => ({ kind, supersededBy });
+const m2 = (kind: string, supersededBy: string | null = null, salience = 0.5) =>
+  ({ kind, supersededBy, salience });
 
 test("composition separates live from cold and counts pressure", () => {
   const c = composition([
@@ -121,6 +122,7 @@ test("composition separates live from cold and counts pressure", () => {
   assert.equal(c.episodes, 3, "cold episodes are still episodes");
   assert.equal(c.cold, 1);
   assert.equal(c.waiting, 2, "pressure counts only unconsolidated episodes");
+  assert.equal(c.pressure, 1.0, "pressure sums salience, not headcount");
 });
 
 // The state that went unnoticed for weeks: recall serving raw session
@@ -160,4 +162,17 @@ test("a run producing zero claims is not counted as a success", () => {
     line("2026-01-01T00:02:00Z", "compact", "done  claims=0 consumed=0"),
   ]);
   assert.equal(m.compactions, 0);
+});
+
+test("pressure is reported as salience against the real threshold", () => {
+  const out = formatComposition(composition([m2("episode", null, 0.9), m2("episode", null, 0.9)]), 6);
+  assert.match(out, /1\.8\/6/, "must show salience, not a count");
+  assert.match(out, /2 raw/);
+});
+
+test("a high-salience store reaches the threshold with fewer episodes", () => {
+  const few = composition(Array.from({ length: 4 }, () => m2("episode", null, 1.0)));
+  const many = composition(Array.from({ length: 8 }, () => m2("episode", null, 0.2)));
+  assert.ok(few.pressure > many.pressure,
+    "4 important notes should outweigh 8 trivial ones");
 });
