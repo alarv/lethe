@@ -7,6 +7,7 @@
  */
 
 import { Store, findProjectRoot, letheHome, memoryDir, readSource, type Scope } from "./store.js";
+import { formatMetrics, metrics, readLog } from "./metrics.js";
 import { defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, writeConfig } from "./config.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
@@ -26,6 +27,7 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe restart                stop running servers (harness respawns them)
   lethe rules                  append the memory instructions to AGENTS.md
   lethe status                 is it working? counts, pressure, last activity
+  lethe metrics                is it being used? adoption, recall/note balance
   lethe log [-n N]             recent activity
   lethe init [--private]       set up memory for this project
        [--scope=S] [--global]
@@ -83,6 +85,11 @@ async function main(): Promise<void> {
       }
       writeFileSync(target, current + block, "utf8");
       console.log(`appended the lethe section to ${target}`);
+      return;
+    }
+
+    case "metrics": {
+      console.log(formatMetrics(metrics(readLog())));
       return;
     }
 
