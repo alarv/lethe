@@ -1,0 +1,78 @@
+# Changelog
+
+Written by hand, not generated. The value of a change here is usually *why* it was made
+and what failure it fixes, and no tool derives that from a diff.
+
+Kept in the format of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions
+follow [semver](https://semver.org/), with the caveat that 0.x means the tool surface may
+still move.
+
+The release workflow refuses to publish a version with no section here.
+
+## [Unreleased]
+
+## [0.0.1] — 2026-08-27
+
+First published version. Capture, retrieval, consolidation and forgetting all work
+end to end; the thesis that consolidated memory beats raw session logs is **not yet
+proven** — see [`docs/evals.md`](docs/evals.md).
+
+### Added
+
+- **Three memory kinds.** `episode` (what happened, raw, never shared), `claim` (what is
+  true, distilled), `pattern` (how we do things here, promoted on repeated use or
+  corroboration). Where a memory lives is decided by what it is, not by who asks.
+- **Retrieval over an FTS5 index.** BM25 with inverse document frequency, length
+  normalisation and stemming, replacing token-overlap scoring. The index stores ids and
+  scores and never content, so it is small (4.1 MB per 10,000 memories) and deleting it is
+  always a valid recovery. `node:sqlite` is loaded through a runtime feature check, so an
+  older Node falls back to the simpler scorer rather than failing.
+- **Pattern completion.** Consolidation marks source episodes cold rather than deleting
+  them, and those traces stay searchable. A query phrased the way the original session was
+  phrased reaches the claim it became — returned once, as the claim.
+- **Model-directed consolidation.** Every unconsolidated episode goes to the distiller at
+  once; it decides which are about the same problem and returns one claim per group. There
+  is no similarity metric, because a measured one could not tell "same project" from "same
+  problem".
+- **An evidence gate.** A claim that consumes an episode must keep at least one of its
+  retrievable strings — a command, a path, a flag, an assignment. Rejected claims leave
+  their episodes live and searchable.
+- **Forgetting.** Decay with reinforcement on access, and eviction under a capacity
+  budget, cheapest loss first: superseded episodes, then unconsolidated ones, then claims.
+  Patterns are never evicted, nor is any trace whose claim has gone.
+- **Automatic recall.** A `UserPromptSubmit` hook runs recall before the model sees the
+  turn (`lethe hook show`), with an opencode plugin for the same. Measured adoption
+  without it was 10% across 79 sessions; strengthened tool descriptions and rules files
+  both failed to move it.
+- **`lethe metrics`.** Adoption, the recall-to-note balance, and what consolidation has
+  actually produced. It says outright when the store is raw and recall is serving session
+  transcripts.
+- **Reconsolidation.** `correct` supersedes a memory that turned out to be wrong;
+  `confirm` strengthens one that proved right.
+- **Salience-weighted compaction trigger.** Pressure sums salience rather than counting
+  episodes, so a few important notes consolidate sooner than many trivial ones, with a
+  24-hour ceiling on how long anything stays raw. Both tunable via `LETHE_PRESSURE` and
+  `LETHE_MAX_RAW_HOURS`.
+
+### Known limitations
+
+- **The eval reads as a draw, not a win.** Retrieval over claims scores MRR 0.94 against
+  0.93 for the raw episodes they came from. At 18 synthetic tasks that difference is noise.
+  What changed is that consolidation used to *lose* (0.86 vs 0.94); real dogfooded task
+  pairs are the missing piece.
+- **Consolidation mostly compresses rather than generalises.** In practice most claims
+  come out one-to-one with their episode, because real notes are about different things.
+  Whether "many episodes, one claim" happens at useful rates is unproven.
+- **Consolidation needs a model.** MCP sampling is unimplemented by the hosts tested, so it
+  falls back to an API key, Ollama, or an installed agent CLI. With none of those, nothing
+  is consolidated and episodes stay raw — deliberately, since keeping one episode and
+  discarding its siblings is not compression.
+- **`team` scope is the least-tested path.** Sharing claims through a repository works but
+  real multi-author merge behaviour is unproven.
+- **No embeddings, by decision.** There is no embeddings endpoint to ask, and every route
+  means running a large inference runtime locally or sending memories to a third party.
+  The one place they would earn their cost is grouping episodes; see
+  [`docs/architecture.md`](docs/architecture.md).
+
+[Unreleased]: https://github.com/alarv/lethe/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/alarv/lethe/releases/tag/v0.0.1

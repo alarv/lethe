@@ -63,3 +63,15 @@ failing test, a build error, an unfamiliar area, a setup problem. It may
 already be solved. When you learn something durable, record it with `note`.
 If a recalled memory is wrong, fix it with `correct`; if it was right and
 useful, `confirm` it.
+
+## Releasing
+
+Add an entry to `CHANGELOG.md` under `## [Unreleased]` as you go, in the same register as
+the commit messages: what changed and which failure it fixes. At release time move it
+under the version heading.
+
+The publish workflow extracts that section and refuses to publish a version with no
+entry, so a release without notes fails rather than shipping something nobody can read.
+
+Tags are `v`-prefixed (`v0.0.1`), which is what `npm version` produces by default. The
+workflow accepts either form and validates the tag against `package.json`.

@@ -25,7 +25,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # write, so the workflow can attach release notes to the tag it publishes.
+  contents: write
   # Required for --provenance: npm verifies the build came from this workflow.
   id-token: write
 
@@ -89,8 +90,48 @@ jobs:
           fi
           exit $fail
 
+      # Release notes are the one thing no tool can derive from a diff: the value of
+      # a change here is usually which failure it fixes. So the changelog is written
+      # by hand, and publishing without an entry is refused rather than allowed to
+      # produce a release nobody can read.
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          # From the version heading to the next version heading, exclusive.
+          notes="$(awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && (/^## \\[/ || /^\\[[^]]+\\]: *http/) { exit }
+            found { print }
+          ' CHANGELOG.md)"
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            echo "::error::CHANGELOG.md has no entry for $version — add one under '## [$version]'"
+            exit 1
+          fi
+          {
+            echo "body<<CHANGELOG_EOF"
+            printf '%s\n' "$notes"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "found $(printf '%s' "$notes" | wc -l) lines of notes for $version"
+
       - name: Publish
         if: github.event_name != 'workflow_dispatch'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Only creates a release when one does not exist. A release cut by hand in the
+      # UI already has a body somebody wrote; overwriting it would be rude.
+      - name: Attach release notes
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ steps.notes.outputs.body }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists; leaving its notes alone"
+          else
+            printf '%s\n' "$NOTES" > /tmp/notes.md
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file /tmp/notes.md
+          fi

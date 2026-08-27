@@ -280,6 +280,12 @@ Embeddings run on-device by default — a ~23MB model, fetched once, no API key,
 configuration, nothing leaving your machine. Hosted providers are opt-in. Your memories
 contain your source code; that seemed like the right default.
 
+## Changelog
+
+[`CHANGELOG.md`](CHANGELOG.md), written by hand. The release workflow refuses to publish
+a version with no entry, because release notes are the one thing no tool derives from a
+diff — what matters about a change here is usually which failure it fixes.
+
 ## Design
 
 - [`docs/brain.md`](docs/brain.md) — how memory actually works: complementary learning
