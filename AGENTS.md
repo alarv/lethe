@@ -75,3 +75,13 @@ entry, so a release without notes fails rather than shipping something nobody ca
 
 Tags are `v`-prefixed (`v0.0.1`), which is what `npm version` produces by default. The
 workflow accepts either form and validates the tag against `package.json`.
+
+**The tag must be annotated.** `git push --follow-tags` silently ignores lightweight
+tags, so `git tag v0.0.1 && git push --follow-tags` creates a local tag, pushes nothing,
+and the release never happens with no error anywhere. Use one of:
+
+```sh
+npm version patch && git push --follow-tags     # npm creates an annotated tag
+git tag -a v0.0.1 -m "v0.0.1" && git push --follow-tags
+git tag v0.0.1 && git push origin v0.0.1        # explicit, works either way
+```

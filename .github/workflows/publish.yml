@@ -1,6 +1,11 @@
 # Publish to npm on a version tag or a GitHub release.
 #
 #   npm version patch && git push --follow-tags    # tag-driven
+#
+# Note --follow-tags only pushes ANNOTATED tags. `git tag v0.0.1` makes a
+# lightweight one, which it silently skips -- so the tag stays local and nothing
+# runs. npm version annotates; by hand, use `git tag -a` or push the tag
+# explicitly.
 #   or: cut a Release in the GitHub UI             # release-driven
 #
 # Both work, and the tag may be written either "v0.0.1" or "0.0.1", because
