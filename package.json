@@ -29,6 +29,8 @@
   },
   "files": [
     "dist",
+    "!dist/**/*.test.*",
+    "!dist/testing.*",
     "docs/api-design.md",
     "docs/architecture.md",
     "docs/brain.md",
@@ -40,7 +42,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test",
+    "test": "npm run build && node --test \"dist/**/*.test.js\"",
     "assets": "sh scripts/assets.sh",
     "eval": "node --experimental-strip-types evals/run.ts",
     "prepublishOnly": "npm run build"
