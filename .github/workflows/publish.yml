@@ -49,6 +49,27 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: npm
 
+      # Trusted publishing (OIDC) needs npm 11.5.1 or newer, and setup-node installs
+      # whatever npm shipped with the Node release it fetched -- which for Node 22 is
+      # not guaranteed to be new enough. Upgraded and asserted rather than assumed, so
+      # a too-old npm fails here with the reason rather than confusingly at publish.
+      - name: Ensure npm supports trusted publishing
+        run: |
+          npm i -g npm@^11
+          echo "npm $(npm -v)"
+          NPM_VERSION="$(npm -v)" node -e '
+            const need = [11, 5, 1];
+            const cur = process.env.NPM_VERSION.split(".").map(Number);
+            const ok = cur[0] > need[0]
+              || (cur[0] === need[0]
+                  && (cur[1] > need[1] || (cur[1] === need[1] && cur[2] >= need[2])));
+            if (!ok) {
+              console.log("::error::npm " + process.env.NPM_VERSION
+                + " is too old for trusted publishing; need >= " + need.join("."));
+              process.exit(1);
+            }
+          '
+
       - run: npm ci
 
       - name: Typecheck
@@ -120,6 +141,13 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "found $(printf '%s' "$notes" | wc -l) lines of notes for $version"
 
+      # Auth is whichever is configured. Once a trusted publisher is registered for this
+      # package on npmjs.com, OIDC handles it and NPM_TOKEN can be deleted outright --
+      # which is the point, since a secret that does not exist cannot leak. Until then
+      # the token is the fallback, and an unset secret simply arrives empty.
+      #
+      # Trusted publishing supplies provenance itself; the flag is kept so the token
+      # path produces an attestation too.
       - name: Publish
         if: github.event_name != 'workflow_dispatch'
         run: npm publish --provenance --access public
