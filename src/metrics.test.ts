@@ -85,3 +85,23 @@ test("meanHits excludes empty recalls, matching its label", () => {
   assert.equal(m.meanHits, 5, "must average 4 and 6, not 0, 4 and 6");
   assert.equal(m.emptyRecalls, 1, "the empty one is reported separately");
 });
+
+test("separates hook-driven recalls from model-driven ones", () => {
+  const m = metrics([
+    line("2026-01-01T00:00:00Z", "start", "connected  build=b1"),
+    line("2026-01-01T00:01:00Z", "recall", "q1  hits=2 via=hook"),
+    line("2026-01-01T00:02:00Z", "recall", "q2  hits=3"),
+  ]);
+  assert.equal(m.recalls, 2);
+  assert.equal(m.recallsViaHook, 1);
+  assert.match(formatMetrics(m), /1 via hook, 1 by the model/);
+});
+
+test("says so when nothing is driving recall but the model", () => {
+  const m = metrics([
+    line("2026-01-01T00:00:00Z", "start", "connected  build=b1"),
+    line("2026-01-01T00:01:00Z", "recall", "q  hits=2"),
+  ]);
+  assert.equal(m.recallsViaHook, 0);
+  assert.match(formatMetrics(m), /lethe hook show/);
+});

@@ -10,6 +10,7 @@
 
 import type { Memory, Scope, Store } from "./store.js";
 import { log } from "./log.js";
+import { STOP, stem } from "./query.js";
 
 /** Asks a model for a completion. Supplied by the MCP host via sampling. */
 export type Distiller = (prompt: string) => Promise<string>;
@@ -69,19 +70,6 @@ const SIMILARITY = 0.12;
  * discarding the specific commands and traps that made each one worth keeping.
  */
 const MAX_CLUSTER = 5;
-
-const STOP = new Set([
-  "the", "and", "for", "with", "that", "this", "was", "were", "not", "but", "you",
-  "from", "have", "has", "had", "are", "its", "it's", "then", "than", "when",
-]);
-
-/** Crude suffix stripping so "test" and "tests" collide. Not a real stemmer. */
-function stem(t: string): string {
-  for (const suf of ["ing", "ed", "es", "s"]) {
-    if (t.length > suf.length + 2 && t.endsWith(suf)) return t.slice(0, -suf.length);
-  }
-  return t;
-}
 
 function tokens(m: Memory): Set<string> {
   const text = `${m.title} ${m.body}`.toLowerCase();

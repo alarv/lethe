@@ -8,6 +8,7 @@
 
 import { Store, findProjectRoot, letheHome, memoryDir, readSource, type Scope } from "./store.js";
 import { formatMetrics, metrics, readLog } from "./metrics.js";
+import { promptHook } from "./hook.js";
 import { defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, writeConfig } from "./config.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
@@ -28,6 +29,8 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe rules                  append the memory instructions to AGENTS.md
   lethe status                 is it working? counts, pressure, last activity
   lethe metrics                is it being used? adoption, recall/note balance
+  lethe hook prompt            recall for a prompt (for a UserPromptSubmit hook)
+  lethe hook show              print the hook config to add to settings.json
   lethe log [-n N]             recent activity
   lethe init [--private]       set up memory for this project
        [--scope=S] [--global]
@@ -86,6 +89,43 @@ async function main(): Promise<void> {
       writeFileSync(target, current + block, "utf8");
       console.log(`appended the lethe section to ${target}`);
       return;
+    }
+
+    case "hook": {
+      const which = rest[0];
+      if (which === "prompt") {
+        await promptHook();
+        return;
+      }
+      if (which === "show") {
+        // Printed rather than written. Editing someone's settings.json without
+        // being asked is not a thing a memory tool should do on its own.
+        const bin = process.argv[1] ?? "lethe";
+        console.log(`Add this to ~/.claude/settings.json to have every prompt recall first:
+
+  {
+    "hooks": {
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            { "type": "command", "command": ${JSON.stringify(`node --disable-warning=ExperimentalWarning ${bin} hook prompt`)} }
+          ]
+        }
+      ]
+    }
+  }
+
+It prints recalled memories on stdout, which the host adds to the context, so
+recall happens whether or not the model thinks to ask. It stays silent when it
+finds nothing, skips slash commands and one-word prompts, and exits 0 on any
+failure -- a memory tool must never be why a session breaks.
+
+Recalls it performs are logged with via=hook, so \`lethe metrics\` can show
+whether this is what moved adoption.`);
+        return;
+      }
+      console.error("usage: lethe hook prompt | lethe hook show");
+      process.exit(1);
     }
 
     case "metrics": {

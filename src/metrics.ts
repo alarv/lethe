@@ -20,6 +20,8 @@ export interface Metrics {
   sessionsUsing: number;
   sessionsRecalling: number;
   recalls: number;
+  /** Recalls the UserPromptSubmit hook performed, needing no model cooperation. */
+  recallsViaHook: number;
   notes: number;
   confirms: number;
   corrections: number;
@@ -68,7 +70,7 @@ export function metrics(lines: string[]): Metrics {
   // answers, "did a session that had lethe available use it", does not need
   // perfect attribution to be worth knowing.
   const sessions: { used: boolean; recalled: boolean; recalledAny: boolean }[] = [];
-  let recalls = 0, notes = 0, confirms = 0, corrections = 0, emptyRecalls = 0;
+  let recalls = 0, recallsViaHook = 0, notes = 0, confirms = 0, corrections = 0, emptyRecalls = 0;
   let hitTotal = 0, hitCount = 0, confirmedAfterRecall = 0;
   const builds = new Set<string>();
 
@@ -85,6 +87,7 @@ export function metrics(lines: string[]): Metrics {
     switch (e.event) {
       case "recall": {
         recalls += 1;
+        if (/\bvia=hook\b/.test(e.rest)) recallsViaHook += 1;
         if (current) current.recalled = true;
         const hits = Number(/hits=(\d+)/.exec(e.rest)?.[1] ?? NaN);
         if (Number.isFinite(hits)) {
@@ -120,6 +123,7 @@ export function metrics(lines: string[]): Metrics {
     sessionsUsing: sessions.filter((s) => s.used).length,
     sessionsRecalling: sessions.filter((s) => s.recalled).length,
     recalls,
+    recallsViaHook,
     notes,
     confirms,
     corrections,
@@ -153,7 +157,8 @@ export function formatMetrics(m: Metrics): string {
 
   lines.push("");
   lines.push("balance — memory should be read far more often than written");
-  row("recalls", String(m.recalls));
+  row("recalls", String(m.recalls),
+    m.recallsViaHook ? `${m.recallsViaHook} via hook, ${m.recalls - m.recallsViaHook} by the model` : "all by the model");
   row("notes", String(m.notes));
   row("recalls per note", m.notes ? (m.recalls / m.notes).toFixed(2) : "n/a",
     m.notes && m.recalls / m.notes < 1 ? "<- backwards" : "");
@@ -165,6 +170,13 @@ export function formatMetrics(m: Metrics): string {
   row("confirmed after a recall", String(m.confirmedAfterRecall),
     "floor only — confirm needs the model to call it");
   row("corrections", String(m.corrections));
+
+  if (!m.recallsViaHook) {
+    lines.push("");
+    lines.push("  No recalls came from a hook. Every one depended on the model choosing to");
+    lines.push("  call it, which is why the adoption figure above looks as it does.");
+    lines.push("  `lethe hook show` prints the config that removes that dependency.");
+  }
 
   if (m.builds.length > 1) {
     lines.push("");
