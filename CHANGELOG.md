@@ -11,6 +11,28 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+## [0.0.2] — 2026-08-27
+
+Documentation and CI. No behaviour changes.
+
+### Changed
+
+- **The README is written for people deciding whether to use lethe**, rather than for
+  someone maintaining it. It now leads with the problem being solved, covers installing
+  into Claude Code, opencode, Cursor, Windsurf, Zed and Codex CLI, and calls out the hook
+  step — without which the tool mostly does not get called at all.
+- `docs/architecture.md` documents the retrieval layering and records why embeddings were
+  rejected, replacing the provider design that was never built.
+- `docs/compact.md` documents model-directed grouping and the evidence gate, replacing the
+  description of lexical clustering.
+
+### Added
+
+- **CI on every push and pull request**, across Node 22 and 24 — the supported floor plus
+  one ahead, since `node:sqlite` is experimental and can move underneath us.
+- The published tarball is now checked per commit rather than only at release, so an
+  internal file entering the package fails immediately instead of shipping.
+
 ## [0.0.1] — 2026-08-27
 
 First published version. Capture, retrieval, consolidation and forgetting all work
@@ -74,5 +96,6 @@ proven** — see [`docs/evals.md`](docs/evals.md).
   The one place they would earn their cost is grouping episodes; see
   [`docs/architecture.md`](docs/architecture.md).
 
-[Unreleased]: https://github.com/alarv/lethe/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/alarv/lethe/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/alarv/lethe/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/alarv/lethe/releases/tag/v0.0.1
