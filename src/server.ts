@@ -43,7 +43,33 @@ function render(m: Memory): string {
  * the episodic buffer plays the same role. Running inside a live session is what
  * lets us borrow the host's model, so there is no key and no cron.
  */
-const PRESSURE_THRESHOLD = 12;
+/** Both thresholds are overridable, because the right values are unknown. */
+function num(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Sleep pressure, summed over salience rather than counted.
+ *
+ * A flat count of episodes is one-dimensional: three genuinely important notes
+ * never reach it while twelve trivial ones do. docs/brain.md 4 says replay is
+ * selective and driven by significance, so significance is what should build
+ * pressure. At the default salience of 0.5 this still fires at twelve episodes,
+ * so the familiar behaviour is preserved; a store of high-salience findings
+ * consolidates sooner, and a store of noise later.
+ */
+const PRESSURE_THRESHOLD = num(process.env.LETHE_PRESSURE, 6);
+/**
+ * However little pressure has built, nothing stays raw longer than this.
+ *
+ * The failure it fixes: a project where a few notes are written each week never
+ * reaches any threshold, so it never consolidates at all and recall keeps
+ * serving raw sessions. Checked on write rather than on a clock, because an MCP
+ * server has no scheduler and the one lifecycle event that would do -- session
+ * end -- does not fire for people who leave sessions open for days.
+ */
+const MAX_RAW_AGE_MS = num(process.env.LETHE_MAX_RAW_HOURS, 24) * 60 * 60 * 1000;
 
 export function createServer(cwd = process.cwd()): McpServer {
   let store = new Store(cwd);
@@ -105,7 +131,15 @@ export function createServer(cwd = process.cwd()): McpServer {
   function relievePressure(): void {
     if (compacting) return;
     const episodes = store.all().filter((m) => m.kind === "episode" && !m.supersededBy);
-    if (episodes.length < PRESSURE_THRESHOLD) return;
+    if (!episodes.length) return;
+
+    const pressure = episodes.reduce((sum, m) => sum + m.salience, 0);
+    const oldest = episodes.reduce(
+      (min, m) => Math.min(min, Date.parse(m.created) || Infinity),
+      Infinity,
+    );
+    const stale = Number.isFinite(oldest) && Date.now() - oldest > MAX_RAW_AGE_MS;
+    if (pressure < PRESSURE_THRESHOLD && !stale) return;
     compacting = true;
 
     void (async () => {
@@ -113,7 +147,10 @@ export function createServer(cwd = process.cwd()): McpServer {
         const resolved = await resolveDistiller(hostSampling());
         logResolved(resolved);
         if (!resolved) return; // episodes wait for a session that can distil
-        log("compact", "pressure threshold reached", { episodes: episodes.length });
+        log("compact", stale ? "raw episodes went stale" : "pressure threshold reached", {
+          episodes: episodes.length,
+          pressure: pressure.toFixed(2),
+        });
         const r = await compact(store, {
           distil: resolved.distil,
           claimScope: defaultScope(workspace()),

@@ -246,7 +246,14 @@ whether this is what moved adoption.`);
       const last = (e: string) => [...lines].reverse().find((l) => l.includes(` ${e} `));
 
       console.log(`memories   ${all.length}  (${episodes} episode, ${by("claim")} claim, ${by("pattern")} pattern)`);
-      console.log(`pressure   ${episodes}/12 ${episodes >= 12 ? "— compaction due" : ""}`);
+      const threshold = Number(process.env.LETHE_PRESSURE) > 0 ? Number(process.env.LETHE_PRESSURE) : 6;
+      const pressure = store.all()
+        .filter((m) => m.kind === "episode" && !m.supersededBy)
+        .reduce((sum, m) => sum + m.salience, 0);
+      console.log(
+        `pressure   ${pressure.toFixed(1)}/${threshold} salience across ${episodes} raw episode(s)` +
+          `${pressure >= threshold ? " — compaction due" : ""}`,
+      );
       const root = findProjectRoot();
       console.log(`store      ${root ? memoryDir("local") : "(not in a git repo — local scope unavailable)"}`);
       console.log(`log        ${LOG_PATH}`);
