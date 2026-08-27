@@ -46,6 +46,7 @@ export type Event =
   | "correct"
   | "forget"
   | "compact"
+  | "index"
   | "sampling"
   | "error";
 
