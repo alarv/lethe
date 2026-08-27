@@ -1,16 +1,27 @@
-# Publish to npm on a version tag.
+# Publish to npm on a version tag or a GitHub release.
 #
-#   npm version patch          # bumps package.json and creates the tag
-#   git push --follow-tags     # this workflow does the rest
+#   npm version patch && git push --follow-tags    # tag-driven
+#   or: cut a Release in the GitHub UI             # release-driven
 #
-# The tag is the trigger and package.json is the source of truth; the two must
-# agree or the run fails before publishing. A mistagged release should be loud.
+# Both work, and the tag may be written either "v0.0.1" or "0.0.1", because
+# guessing wrong should not mean a release that silently publishes nothing.
+#
+# Whichever path is taken, package.json is the source of truth: if the tag and
+# the version disagree the run fails before anything reaches the registry. A
+# mistagged release should be loud.
 name: publish
 
 on:
   push:
-    tags: ["v*"]
-  # Allows a dry run against any ref without publishing anything.
+    tags:
+      # Deliberately loose. A pattern precise enough to be wrong would mean a
+      # release that publishes nothing and says nothing; the version check
+      # below is what actually validates the tag.
+      - "v*"
+      - "[0-9]*"
+  release:
+    types: [published]
+  # Runs every check without publishing, against any ref.
   workflow_dispatch:
 
 permissions:
@@ -42,12 +53,13 @@ jobs:
         run: npm test
 
       - name: Tag must match package.json
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name != 'workflow_dispatch'
         run: |
+          # A release event names the tag in ref_name too, so one path handles both.
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(node -p "require('./package.json').version")"
           if [ "$tag" != "$pkg" ]; then
-            echo "::error::tag v$tag does not match package.json version $pkg"
+            echo "::error::tag '$GITHUB_REF_NAME' does not match package.json version '$pkg' — bump one of them"
             exit 1
           fi
           echo "publishing $pkg"
@@ -78,7 +90,7 @@ jobs:
           exit $fail
 
       - name: Publish
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name != 'workflow_dispatch'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
