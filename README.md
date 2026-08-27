@@ -25,9 +25,12 @@ A memory that only grows is a log file. The value of a memory system is not what
 stores — it is what it refuses to store. Forgetting the incidental is the same
 operation as extracting the general rule.
 
-> **Status: early.** Capture, recall and compaction work. Retrieval is keyword
-> matching, not embeddings, and none of it is measured yet — see
-> [`docs/evals.md`](docs/evals.md).
+> **Status: early, and measured.** Capture, recall, consolidation and forgetting work.
+> Retrieval is BM25 over an FTS5 index — no embeddings, no model, no download. Against
+> the retrieval eval, consolidation went from losing to raw episodes (MRR 0.86 vs 0.94)
+> to drawing with them (0.94 vs 0.93). At 18 synthetic tasks that delta is noise, so the
+> honest claim is that the loss disappeared, not that consolidation wins. See
+> [`docs/evals.md`](docs/evals.md), including where we lose.
 
 ## The idea
 
@@ -42,9 +45,9 @@ tue 14:15  tried resetting the test database, still refused
 tue 14:31  postgres container wasn't running. `docker compose up` fixed it
 ```
 
-Later — on idle, or at session end — Lethe **compacts**. It clusters
-related episodes, works out what was actually invariant across them, writes that down,
-and deletes the rest:
+Later, off the latency path, Lethe **compacts**. It hands the raw episodes to a model,
+which decides which of them are about the same underlying thing, works out what was
+invariant across them, and writes that down:
 
 ```
 .lethe/memory/testing.md
@@ -54,9 +57,11 @@ and deletes the rest:
   not the test code.
 ```
 
-Four episodes in, one rule out, and the episodes are gone. On Thursday the agent reads
-one line instead of rediscovering it over twenty-nine minutes — and *you* never see any
-of this, because it happened while you weren't waiting.
+Four episodes in, one rule out. The episodes go cold rather than being deleted, so they
+stay on disk as a second route to the claim — a query phrased the way the original
+session was phrased still finds it. Eventually they are evicted, weakest first. On
+Thursday the agent reads one line instead of rediscovering it over twenty-nine minutes,
+and *you* never see any of this, because it happened while you weren't waiting.
 
 Rules that keep proving useful get stronger. Rules nobody touches decay and eventually
 fall out. Rules that turn out to be wrong get corrected in place, because retrieval
@@ -70,6 +75,33 @@ hands the agent an id along with the memory.
    capacity pressure. Capacity is treated as fixed.
 3. **Reconsolidation** — a memory that has become false can be corrected, instead of
    sitting in the index being confidently wrong forever.
+
+## Recall happens without being asked
+
+Left to itself, an agent mostly does not call a memory tool. Measured over 79 sessions of
+real use: **76% never touched Lethe at all, and only 10% ever called `recall`.** Two
+attempts to fix that by persuasion both failed — strengthened tool descriptions do not
+reach the model in hosts that load MCP schemas on demand, and a rules file loses to
+everything else competing for attention.
+
+So Lethe does not rely on being asked. A host hook runs recall before the model sees your
+turn and injects what it finds:
+
+```sh
+lethe hook show      # prints the config to add to ~/.claude/settings.json
+```
+
+opencode gets the same via `plugins/opencode.js`. Injecting on every prompt makes
+precision the whole problem, so it stays silent unless the prompt shares two content
+words with a memory, or one word rare enough in your store to not be a coincidence — and
+it prefers distilled claims over raw episodes, which are trimmed to an excerpt and an id.
+
+```sh
+lethe metrics        # adoption, recall/note balance, what consolidation produced
+```
+
+`metrics` is the honest check. If `distilled per episode` reads 0.00, consolidation has
+produced nothing and recall is serving you raw session transcripts.
 
 ## Memory lives in your repo, as text
 
@@ -131,9 +163,9 @@ the model your agent already has; the CI path needs its own key, so it is opt-in
 
 ## Running it
 
-> Works today: recording, recall, and compaction (consolidate, promote, decay).
-> Retrieval is keyword matching rather than embeddings, so recall misses things
-> phrased differently. Nothing is measured yet.
+> Works today: recording, recall over a BM25 index, consolidation, promotion, decay and
+> eviction, plus automatic recall via a host hook. Requires Node 22 or newer for the
+> index; on anything older retrieval falls back to a simpler scorer rather than failing.
 
 ```sh
 git clone https://github.com/alarv/lethe.git && cd lethe
@@ -229,7 +261,7 @@ contain your source code; that seemed like the right default.
   systems, sharp-wave ripple consolidation, synaptic downscaling, reconsolidation. And
   an honest account of where we break from biology.
 - [`docs/architecture.md`](docs/architecture.md) — the three stores, why text is the
-  source of truth, embeddings, salience.
+  source of truth, how retrieval is layered, salience, and why embeddings were rejected.
 - [`docs/compact.md`](docs/compact.md) — the consolidation pass, when it runs, and who
   provides the model.
 - [`docs/evals.md`](docs/evals.md) — how we intend to prove any of this works, written
@@ -245,14 +277,26 @@ boring and testable on the inside.**
 
 ## Roadmap
 
-- [ ] **Prove the thesis.** Eval: retrieval over distilled memory vs. retrieval over
-      raw session logs. If distillation doesn't win, stop here.
 - [x] **Core.** Three memory types, decay and eviction.
-- [x] **Compaction.** Consolidate, promote, decay — triggered by pressure.
+- [x] **Compaction.** Consolidate, promote, decay — triggered by salience pressure.
 - [x] **MCP server.** Works in any harness that speaks MCP.
-- [ ] **Embeddings.** Replace keyword retrieval.
-- [ ] **Evals.** Publish the numbers.
+- [x] **Retrieval.** BM25 over a derived FTS5 index, with cold episodes routing forward
+      to the claims they became.
+- [x] **Automatic recall.** A host hook, because relying on the model to ask produced 10%
+      adoption.
+- [x] **Forgetting.** Bounded capacity, evicted cheapest-loss-first.
+- [ ] **Prove the thesis.** The retrieval eval currently reads as a draw on 18 synthetic
+      tasks. Real dogfooded task pairs are the missing piece; a draw is not a win.
+- [ ] **Publish the numbers**, including where we lose.
 - [ ] **Archetypes.** Memory policy as configuration.
+
+Embeddings are **not** on the roadmap. There is no embeddings endpoint to ask — Anthropic
+ships none and MCP has no such primitive — so every route means running ~123 MB of
+inference runtime locally or sending your memories to a third party, and the defect they
+would have masked was a consolidation bug rather than a retrieval one. See
+[`docs/architecture.md`](docs/architecture.md) for the full record. The one place they
+would genuinely earn their cost is grouping episodes, where lexical similarity provably
+cannot work — that stays open.
 
 ## License
 

@@ -88,7 +88,6 @@ lethe compact                # consolidate + promote + decay
 lethe compact --dry-run      # print the diff, change nothing
 lethe compact --deep         # also purge cold memories under capacity pressure
 lethe compact --scope=personal
-lethe compact --extractive   # no model call; cluster and pick, do not rewrite
 
 lethe sleep                  # alias for `lethe compact`
 ```
@@ -147,22 +146,23 @@ Four paths, with honest tradeoffs:
 | **In-session (MCP sampling)** | The user's own agent, via the host | No | No |
 | **Local CLI** | A provider the user configured, or a local model | Yes | No |
 | **CI** | An API called from the workflow | Yes, repo secret | Yes |
-| **Extractive** | Nobody — clustering only | No | Yes |
+| **None available** | Nobody | No | — |
 
 **In-session is the default and the one to get right.** MCP has a `sampling` capability:
 the server asks the *client* for a completion, so consolidation runs on whatever model
 the user is already paying for. No key ever touches Lethe, nothing leaves the machine
 that was not already going to the user's provider, and there is no separate cost.
 
-The catch is that sampling support across MCP clients is inconsistent. So the server
-must degrade: if the host does not offer sampling, fall back to a configured provider,
-and if there is none, fall back to `--extractive`.
+The catch is that sampling support across MCP clients is inconsistent — in practice none
+of the hosts tested implement it. So the server degrades: host sampling, then a
+configured API key, then Ollama, then an agent CLI already installed and authenticated
+(`opencode`, `claude`). If none is available, **nothing is consolidated**. Episodes are
+kept intact and wait for a session that can distil them.
 
-**Extractive mode** does no rewriting at all. It clusters related episodes, picks the
-most representative one, keeps it verbatim, and discards the others. Worse claims than a
-model would write, but free, deterministic, offline, and it runs anywhere. Whether the
-quality gap justifies the model is exactly what the eval measures — see
-`docs/architecture.md` § Open questions.
+That last point is deliberate. There is no extractive fallback that keeps the most
+representative episode and discards its siblings: that is not compression, it is losing
+eleven memories to keep one. A store that cannot consolidate should stay raw and
+searchable rather than be quietly thinned.
 
 ## The maintenance window: compaction as a pull request
 
@@ -171,7 +171,7 @@ reviews before anything becomes shared knowledge.
 
 **This path requires an API key in repo secrets**, which conflicts with the local-first
 default. It is therefore opt-in and explicitly not the recommended starting point — or
-it can be run with `--extractive`, which needs no key at all but produces blunter claims.
+it simply does not run, and the episodes wait for a session that has a model.
 
 ```yaml
 # .github/workflows/lethe-compact.yml
@@ -228,22 +228,55 @@ the system, so it is bound by three rules:
    claim. Below a confidence threshold, leave the episodes alone and try again next
    cycle with more evidence.
 
+## Grouping is the model's job, not a metric's
+
+Consolidation used to group episodes by Jaccard word overlap and distil each group. That
+does not work, and the reason is measured rather than theoretical: on a single-project
+store every note shares vocabulary, so "about the same project" and "about the same
+problem" score alike. Over 13 hand-labelled pairs the best achievable accuracy was 77%
+for Jaccard and 85% for TF-IDF cosine — and the unrelated pairs scored *higher* than most
+genuinely related ones, so no threshold separates them. In practice it fused five
+unrelated notes into one claim and would have silently dropped four of them.
+
+So the distiller now receives every unconsolidated episode at once, numbered, and returns
+however many claims it finds, citing which episodes each came from. There is no
+similarity metric, no threshold and no cluster cap. A lone episode becoming a claim is
+the model's judgement rather than a counter crossing a line.
+
+Replay is capped and ordered by salience, which is what selective replay means (§4 of
+`docs/brain.md`): a store that went months without a distiller could hold hundreds of
+episodes, and the most significant ones should be replayed first.
+
+### The evidence gate
+
+A model asked to compress will sometimes absorb an episode and keep nothing from it. That
+is the failure the five-way fusion produced, and it is checked mechanically rather than
+trusted: **consume an episode and the claim must retain at least one of its retrievable
+strings** — a command, a path, a flag, an environment assignment.
+
+Not *every* string. That rule forbids compression outright, since a 2 KB episode citing
+eight files cannot become three lines and keep all eight. A rejected claim leaves its
+episodes live and searchable, and the next pass retries. Rejections are logged with what
+each orphaned source lost, because a silent rejection is indistinguishable from
+consolidation being broken.
+
 ## Status
 
-Built: clustering, distillation (via host sampling, with extractive fallback),
-promotion, decay, cold purge, and the pressure trigger.
+Built: model-directed grouping, distillation, the evidence gate, promotion, decay,
+eviction under capacity pressure, and the salience-weighted trigger.
 
-Not built: embeddings-based clustering, and any evidence that the model path beats
-the extractive one. That comparison is `docs/evals.md`.
+Not built: any evidence that consolidated memory beats raw episodes on real tasks. The
+retrieval eval currently reads as a draw on synthetic ones, which is not a win. That
+comparison is `docs/evals.md`.
 
 ## Open questions
 
-- **Does step 1 need an LLM?** It is the only part of Lethe that would. Extractive
-  approaches (cluster, pick the most central episode, keep it verbatim) are free,
-  deterministic, and offline — but produce worse claims. The eval measures the gap and
-  decides whether the cost is earned.
-- **Clustering method.** Embedding similarity is the obvious start. Whether to also
-  cluster on shared `files[]` and `entities[]` is untested.
+- **Does grouping need an LLM?** Currently yes, and lexical alternatives were measured
+  and rejected above. Embeddings for grouping alone remain the honest fallback if the
+  model proves unreliable — that is the one place they would earn their cost.
+- **Thresholds.** Pressure fires at 6 summed salience, and nothing stays raw beyond 24
+  hours. Both are guesses, both are overridable (`LETHE_PRESSURE`,
+  `LETHE_MAX_RAW_HOURS`), and the eval should replace them with numbers.
 - **Decay rate and thresholds.** Guessed initially, tuned by the eval. Too aggressive
   loses real knowledge; too slow and we are just another store that grows forever.
 - **Conflict handling.** When a new claim contradicts an existing one, is that a

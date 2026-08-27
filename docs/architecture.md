@@ -85,7 +85,7 @@ retrieved on query.
 ~/.lethe/
   memory/*.md        ← personal memory. never shared, never committed.
   index.db           ← derived.
-  models/            ← cached embedding model.
+  index.db           ← derived FTS5 index. Disposable; rebuilt from the markdown.
 ```
 
 **Where a memory lives is decided by what it is, not by who asks.**
@@ -163,43 +163,96 @@ own; the database is what makes it fast.
 The payoff is that `sleep` produces a **readable diff a team can approve in a PR**. See
 `docs/compact.md`.
 
-## Embeddings
+## Retrieval
 
-An embedding turns text into a vector positioned so that texts with similar *meaning*
-land near each other — "the auth uses JWT" and "we authenticate with JSON web tokens"
-produce nearly identical vectors despite sharing no words. Retrieval embeds the query
-and finds the nearest stored memories. This is what makes recall work when the user
-does not know the exact wording of what was stored.
+Retrieval is layered, and the layers answer different questions.
 
-Embeddings are **not** the consolidation LLM. They are cheap, fast, deterministic, and
-needed on every read. The LLM is only involved in `sleep`, is expensive and
-nondeterministic, and is deferred until the eval says whether it earns its cost. A v1
-with local embeddings and no LLM at all is a viable product.
-
-One interface, three implementations:
-
-```ts
-interface EmbeddingProvider {
-  readonly id: string;        // recorded per-vector; changing model forces reindex
-  readonly dimensions: number;
-  embed(texts: string[]): Promise<Float32Array[]>;
-}
+```
+markdown            the truth
+   │
+   ▼
+~/.lethe/index.db   which ids match this query, and how well   (FTS5 + bm25)
+   │
+   ▼
+src/rank.ts         which of those deserve to surface          (memory dynamics)
+   │
+   ▼
+read markdown       return the top N
 ```
 
-| Provider | Weight | Dims | Notes |
-|---|---|---|---|
-| **`local`** (default) — `all-MiniLM-L6-v2`, quantized ONNX | ~23 MB, downloaded once, cached in `~/.lethe/models/` | 384 | Offline, no API key, no config, no data leaves the machine |
-| `openai` — `text-embedding-3-small` | 0 | 1536 | ~$0.02 / 1M tokens. Better quality, requires a key |
-| `endpoint` — any OpenAI-compatible URL | 0 | — | Self-hosted or cloud-tenant deployments |
+The load-bearing property: **the index stores ids and scores, never content.** The FTS5
+tables are declared `content=''`, so no memory text is duplicated into the database. That
+is why it stays small — measured at 4.1 MB per 10,000 memories against 23.7 MB if the
+bodies were stored — and why deleting `index.db` is always a valid recovery. It holds
+nothing that is not in the markdown.
 
-**Local is the default on purpose.** Memories contain proprietary source code, so
-"nothing leaves your machine unless you opt in" is the correct posture for the
-environments we want to be adopted in — and it means `npx lethe` works with zero setup.
-The ~23MB fetch is lazy, on first use, not at install.
+`bm25()` supplies the lexical term. It brings what the previous scorer lacked: inverse
+document frequency, so a common word no longer counts as much as a rare one; length
+normalisation, so a long episode no longer accumulates relevance by being long; and
+tokenisation, so `auth` no longer matches inside `author`. The ranker then multiplies
+lethe's own signals on top — 1.5x for claims and patterns, 2x for overlap with the paths
+in front of you, 0.5x for a memory borrowed from a neighbouring repository, and
+`strength`. Decay and consolidation continue to steer results.
 
-The provider `id` is stored alongside every vector. Switching providers changes the
-vector space, so it invalidates the index and triggers a rebuild — cheap, because the
-markdown is the source of truth.
+`node:sqlite` is built into Node 22, so this costs no dependency. It is loaded through a
+runtime feature check rather than a static import, because it is flagged experimental:
+when it is unavailable, retrieval falls back to the older in-memory scorer. **The index is
+an optimisation, not a requirement** — recall degrades rather than failing.
+
+### Pattern completion
+
+Consolidation marks its source episodes superseded rather than deleting them, and those
+cold traces stay in the index. When one of them matches, retrieval does not return it — it
+resolves `supersededBy` forward and returns the claim it became, once, at the best score
+among its routes.
+
+This is CA3's job in the brain (§3): the hippocampal trace is a pointer that reinstates a
+cortical pattern, and consolidation does not sever it — it becomes an additional route.
+Practically, it means distillation can never make something unfindable. The worst case is
+that a query matches only the original wording, arrives through the cold trace, and
+returns the better-written claim.
+
+## Embeddings: rejected, not deferred
+
+Earlier drafts of this document specified an `EmbeddingProvider` interface with a local
+quantized ONNX model as the default. That is no longer the plan, and the reasoning is
+recorded here because it is the kind of decision that otherwise gets re-litigated.
+
+**There is no model available to ask.** Anthropic ships no embeddings endpoint, and MCP
+has a `sampling` primitive for text generation but no embedding primitive. So "have the
+host's model embed it" is not an option — there is no API. Every remaining route means
+running trained weights somewhere:
+
+| route | cost |
+|---|---|
+| in-process via transformers.js | ~23 MB of weights plus **~100 MB+ of inference runtime** |
+| Ollama | a separate application the user must install, plus its own download |
+| an OpenAI-compatible API | memory bodies contain proprietary source; off the table as a default |
+
+**And it would have masked the defect rather than fixing it.** The eval showed
+consolidation retrieving worse than the raw episodes it consumed, and the cause was that
+distillation paraphrased away the exact strings retrieval matches on — a
+consolidation-quality bug. Embeddings would have hidden it at a cost of 123 MB while
+still shipping a distiller that loses commands and paths. Proper lexical ranking plus
+verbatim evidence retention closed the gap for nothing.
+
+Vector retrieval is also what every competitor already does. Lethe's differentiator is
+what happens to a memory over time — consolidation, forgetting, reconsolidation.
+Retrieval is the part we share with everyone; it should be good, cheap and unremarkable.
+
+Rejected outright rather than left behind an interface. An interface with no
+implementation is speculative generality, and it would keep implying that vectors are the
+real answer and this is a stopgap.
+
+**One honest caveat.** The place embeddings *would* earn their cost is grouping episodes
+for consolidation, not retrieval. Deciding whether two notes are about the same *problem*
+rather than merely the same *project* is a semantic judgement, and lexical similarity
+provably cannot make it: measured over 13 hand-labelled pairs, the best achievable
+accuracy was 77% for Jaccard and 85% for TF-IDF cosine, with unrelated pairs scoring
+higher than most genuinely related ones. That grouping is currently done by the
+distilling model itself (see `docs/compact.md`), which has the semantics without the
+download. If that proves unreliable, embeddings for clustering alone is the first thing
+to revisit.
 
 ## Salience
 
@@ -296,7 +349,7 @@ fix it in place, instead of the store accumulating confident falsehoods.
 ## Open questions
 
 - **Does consolidation need an LLM?** Our only model dependency and the entire cost
-  centre. Worth measuring whether clustering plus extractive summarisation gets close
+  centre. Worth measuring whether a cheaper distiller gets close
   enough. The eval decides.
 - **Merge semantics for `semantic` memory.** Markdown makes git merges *possible*, not
   *good*. One claim per file keeps conflicts rare; we should confirm that under real
