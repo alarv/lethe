@@ -33,8 +33,13 @@ interface Task {
 
 type Condition = "cold" | "raw" | "compact" | "all";
 
+/** Which retrieval mechanism is under test. Both are reported: an improvement
+ *  that cannot be attributed to one change is not a measurement. */
+type Mechanism = "naive" | "fts5";
+
 interface Result {
   condition: Condition;
+  mechanism: Mechanism;
   hit1: number;
   hit3: number;
   hit5: number;
@@ -98,7 +103,7 @@ async function buildStore(condition: Condition, home: string, workspace: string)
   return store;
 }
 
-async function run(condition: Condition, tasks: Task[]): Promise<Result> {
+async function run(condition: Condition, tasks: Task[], mechanism: Mechanism): Promise<Result> {
   const home = mkdtempSync(join(tmpdir(), "lethe-eval-"));
   const workspace = mkdtempSync(join(tmpdir(), "lethe-ws-"));
   mkdirSync(join(workspace, ".git"), { recursive: true });
@@ -110,7 +115,9 @@ async function run(condition: Condition, tasks: Task[]): Promise<Result> {
       (n: number, m: { title: string; body: string }) => n + m.title.length + m.body.length, 0);
 
     for (const task of tasks) {
-      const hits = store.search(task.query, K);
+      const hits = mechanism === "fts5"
+        ? store.search(task.query, K)
+        : store.searchNaive(task.query, K);
       // Correct means "surfaced something from the right scenario". Scoring by
       // memory id would be unfair across conditions: the right answer is an
       // episode under raw and a claim under compact.
@@ -135,6 +142,7 @@ async function run(condition: Condition, tasks: Task[]): Promise<Result> {
     const n = tasks.length;
     return {
       condition,
+      mechanism,
       hit1: hit1 / n, hit3: hit3 / n, hit5: hit5 / n, mrr: mrr / n,
       costToAnswer: answered ? cost / answered : 0,
       indexChars,
@@ -151,9 +159,13 @@ async function run(condition: Condition, tasks: Task[]): Promise<Result> {
  * them concurrently let them collide in a single store -- which showed up as
  * every condition scoring identically, including the one with no memories.
  */
-async function runAll(conditions: Condition[], tasks: Task[]): Promise<Result[]> {
+async function runAll(
+  conditions: Condition[],
+  tasks: Task[],
+  mechanism: Mechanism,
+): Promise<Result[]> {
   const out: Result[] = [];
-  for (const c of conditions) out.push(await run(c, tasks));
+  for (const c of conditions) out.push(await run(c, tasks, mechanism));
   return out;
 }
 
@@ -174,28 +186,10 @@ function table(results: Result[], title: string): void {
   }
 }
 
-async function main(): Promise<void> {
-  const all = loadTasks();
-  const conditions: Condition[] = ["cold", "raw", "compact", "all"];
-
-  console.log(`lethe retrieval eval — ${all.length} tasks, top-${K}`);
-  console.log("compact vs raw is the comparison that matters; cold is the floor.");
-
-  const overall = await runAll(conditions, all);
-  table(overall, "all tasks");
-
-  for (const d of ["easy", "hard"] as const) {
-    const subset = all.filter((t) => t.difficulty === d);
-    table(
-      await runAll(conditions, subset),
-      `${d} (${subset.length} tasks)` +
-        (d === "hard" ? " — queries that share little wording with what was recorded" : ""),
-    );
-  }
-
+function verdict(overall: Result[], mechanism: Mechanism): void {
   const raw = overall.find((r) => r.condition === "raw")!;
   const compact = overall.find((r) => r.condition === "compact")!;
-  console.log("\nverdict");
+  console.log(`\nverdict — ${mechanism}`);
   const delta = compact.mrr - raw.mrr;
   const cheaper = raw.costToAnswer - compact.costToAnswer;
   console.log(
@@ -211,6 +205,30 @@ async function main(): Promise<void> {
     console.log("\n  Compaction loses on both axes. That is the thesis failing, not a tuning problem.");
   } else if (delta < 0) {
     console.log("\n  Compaction retrieves worse but costs less. Whether that trade is worth it is a judgement, not a number.");
+  }
+}
+
+async function main(): Promise<void> {
+  const all = loadTasks();
+  const conditions: Condition[] = ["cold", "raw", "compact", "all"];
+  const asked = process.argv.find((a) => a.startsWith("--retrieval="))?.split("=")[1] ?? "both";
+  const mechanisms: Mechanism[] = asked === "both" ? ["naive", "fts5"] : [asked as Mechanism];
+
+  console.log(`lethe retrieval eval — ${all.length} tasks, top-${K}`);
+  console.log("compact vs raw is the comparison that matters; cold is the floor.");
+
+  for (const mechanism of mechanisms) {
+    const overall = await runAll(conditions, all, mechanism);
+    table(overall, `all tasks — ${mechanism}`);
+    for (const d of ["easy", "hard"] as const) {
+      const subset = all.filter((t) => t.difficulty === d);
+      table(
+        await runAll(conditions, subset, mechanism),
+        `${d} (${subset.length} tasks) — ${mechanism}` +
+          (d === "hard" ? " — queries that share little wording with what was recorded" : ""),
+      );
+    }
+    verdict(overall, mechanism);
   }
 }
 

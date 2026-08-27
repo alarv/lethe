@@ -120,6 +120,40 @@ look at it until the design is frozen.
 
 ## Status
 
-Not built. Requires captured sessions first. The order — capture, then evaluate, then
-optimise retrieval — is deliberate: tuning retrieval before there is a measurement is
-how you get a system that feels better and is not.
+Built, at `evals/run.ts`. `npm run eval` measures retrieval quality only — it does not run
+agents, so it does not yet measure the primary metrics above (turns to correct, context
+tokens). It measures the layer underneath them: if retrieval over distilled claims cannot
+beat retrieval over the episodes they came from, nothing downstream can.
+
+The 18 tasks are synthetic, which is the largest caveat on everything below. Real
+dogfooded pairs remain the goal.
+
+## Results
+
+Run under both retrieval mechanisms, because three changes to retrieval landed in
+sequence and a single table cannot say which one moved the numbers.
+
+| mechanism | raw MRR | compact MRR | compact hit@1 | cost-to-answer delta |
+|---|---|---|---|---|
+| `naive` — token overlap, substring matching | 0.94 | 0.86 | 78% | +190 chars |
+| `fts5` — BM25, IDF, length normalisation, porter | 0.93 | 0.94 | 89% | +89 chars |
+
+**What changed.** Under the naive scorer, compaction lost by 0.08 MRR and the harness
+printed "the thesis failing, not a tuning problem". Under BM25 that loss is gone.
+
+**What that is not.** It is not a win. At 18 tasks a 0.02 MRR difference is noise, and the
+honest reading is a draw rather than a victory. What moved is real, though: the *loss*
+disappeared, and `hit@1` for compact rose 11 points.
+
+The diagnosis behind it holds up. Part of raw's original 0.94 was the scorer's own
+weakness flattering longer documents — no IDF, no length normalisation, and substring
+matching, so an episode accumulated relevance by being long. Fixing the ranking removed an
+advantage that was never about the memories.
+
+On the `hard` subset — queries deliberately worded unlike what was recorded — compact
+reaches 0.92 against raw's 0.89, which is the direction the thesis predicts: distilled
+memory should help most where wording differs.
+
+**Still losing on cost.** Compact takes more context to reach an answer, because a claim
+body is fuller than the single episode that would have answered. Halved by better ranking,
+not eliminated.
