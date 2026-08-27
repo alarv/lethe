@@ -136,3 +136,72 @@ test("reports its size on disk", async (t) => {
     ix.close();
   });
 });
+
+test("an unchanged store is not reindexed, so a read-only search does no writes", async (t) => {
+  if (!available) return t.skip("node:sqlite unavailable");
+  const { statSync } = await import("node:fs");
+  await withStore(async (store, home) => {
+    for (let i = 0; i < 30; i++) {
+      store.create({ kind: "claim", title: `m${i}`, body: `body ${i} about consul and vault` });
+    }
+    const path = join(home, "index.db");
+    const ix = indexIn(home);
+    ix.sync(store.all());
+    ix.close();
+
+    const size = statSync(path).size;
+    // Repeated searches must not rewrite the file. Rebuilding on every query
+    // left over half the real index as free pages.
+    for (let i = 0; i < 10; i++) {
+      const again = indexIn(home);
+      again.sync(store.all());
+      again.search("consul", 5);
+      again.close();
+    }
+    assert.equal(statSync(path).size, size, "repeated searches grew the index");
+  });
+});
+
+test("a changed store is reindexed", async (t) => {
+  if (!available) return t.skip("node:sqlite unavailable");
+  await withStore(async (store, home) => {
+    store.create({ kind: "claim", title: "first", body: "vault seal status" });
+    const ix = indexIn(home);
+    ix.sync(store.all());
+    assert.equal(ix.search("nomad", 5).length, 0);
+    store.create({ kind: "claim", title: "second", body: "nomad job allocation" });
+    ix.sync(store.all());
+    assert.equal(ix.search("nomad", 5).length, 1, "a new memory must become searchable");
+    ix.close();
+  });
+});
+
+test("deleting many memories shrinks the file rather than leaving free pages", async (t) => {
+  if (!available) return t.skip("node:sqlite unavailable");
+  const { statSync } = await import("node:fs");
+  await windowShrink();
+
+  async function windowShrink() {
+    await withStore(async (store, home) => {
+      const ids: string[] = [];
+      for (let i = 0; i < 300; i++) {
+        ids.push(store.create({
+          kind: "claim", title: `mem ${i}`,
+          body: `a reasonably long body number ${i} mentioning docker compose redis kafka `
+            + "and quite a lot of additional filler text to give the index something to hold",
+        }).id);
+      }
+      const ix = indexIn(home);
+      ix.sync(store.all());
+      const full = ix.bytes();
+
+      for (const id of ids.slice(0, 280)) store.remove(id);
+      ix.sync(store.all());
+      const shrunk = ix.bytes();
+      ix.close();
+
+      assert.ok(shrunk < full,
+        `index did not shrink after deleting 280 of 300 memories (${full} -> ${shrunk})`);
+    });
+  }
+});
