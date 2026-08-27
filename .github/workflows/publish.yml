@@ -1,0 +1,84 @@
+# Publish to npm on a version tag.
+#
+#   npm version patch          # bumps package.json and creates the tag
+#   git push --follow-tags     # this workflow does the rest
+#
+# The tag is the trigger and package.json is the source of truth; the two must
+# agree or the run fails before publishing. A mistagged release should be loud.
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+  # Allows a dry run against any ref without publishing anything.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Required for --provenance: npm verifies the build came from this workflow.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 22 is the engines floor, and the floor is where node:sqlite must work.
+      # Passing on a newer Node would prove nothing about the version users have.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Builds first, so this also proves the artifact being published compiles.
+      - name: Test
+        run: npm test
+
+      - name: Tag must match package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag does not match package.json version $pkg"
+            exit 1
+          fi
+          echo "publishing $pkg"
+
+      # This check exists because it already nearly went wrong: the files list
+      # published the whole docs directory, so a gitignored working note was in
+      # the tarball for weeks. A .gitignore entry does NOT protect a path that
+      # the files allowlist includes, and nothing warns you.
+      - name: Tarball must not contain internal files
+        run: |
+          npm pack --dry-run --json > /tmp/pack.json
+          files=$(node -p "JSON.parse(require('fs').readFileSync('/tmp/pack.json','utf8'))[0].files.map(f=>f.path).join('\n')")
+          echo "$files"
+          fail=0
+          while IFS= read -r forbidden; do
+            if printf '%s\n' "$files" | grep -qx -- "$forbidden"; then
+              echo "::error::$forbidden must not be published"
+              fail=1
+            fi
+          done <<'FORBIDDEN'
+          docs/lethe.md
+          docs/competition.md
+          FORBIDDEN
+          if printf '%s\n' "$files" | grep -qE '^docs/superpowers/|\.test\.(js|d\.ts|js\.map)$|^dist/testing\.'; then
+            echo "::error::internal specs, plans or test artifacts are in the tarball"
+            fail=1
+          fi
+          exit $fail
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

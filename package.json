@@ -1,6 +1,6 @@
 {
   "name": "@alarv/lethe",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "A memory harness for coding agents that forgets on purpose.",
   "keywords": [
     "memory",
