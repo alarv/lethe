@@ -136,3 +136,53 @@ test("without a corpus it falls back to requiring coverage", () => {
   assert.deepEqual(relevantEnough(found, ["docker", "kafka"]), [],
     "no document frequency available means no rare-term exemption");
 });
+
+import { preferDistilled } from "./hook.js";
+
+test("a single claim beats several episodes", () => {
+  const found = [
+    { kind: "episode", title: "e1" },
+    { kind: "claim", title: "c1" },
+    { kind: "episode", title: "e2" },
+  ];
+  assert.deepEqual(preferDistilled(found).map((m) => m.title), ["c1"],
+    "episodes must not fill the budget when a claim exists");
+});
+
+test("patterns count as distilled", () => {
+  const found = [{ kind: "episode", title: "e" }, { kind: "pattern", title: "p" }];
+  assert.deepEqual(preferDistilled(found).map((m) => m.title), ["p"]);
+});
+
+// The store is 32 episodes to 3 claims, and this project has none at all.
+// Filtering to claims-only would return nothing, so raw traces must survive as
+// the fallback rather than being excluded outright.
+test("episodes survive when there is nothing distilled", () => {
+  const found = [{ kind: "episode", title: "e1" }, { kind: "episode", title: "e2" }];
+  assert.equal(preferDistilled(found).length, 2,
+    "an all-episode store must still return something");
+});
+
+test("an episode body is trimmed far harder than a claim body", () => {
+  const long = "x".repeat(3000);
+  // Measure the body, not the whole block: the preamble is fixed overhead and
+  // counting it hides what the cap actually does.
+  const bodyChars = (block: string) =>
+    block.split("\n").filter((l) => l.startsWith("  x")).join("").length;
+  const asEpisode = renderMemories([mem({ kind: "episode", body: long })]);
+  const asClaim = renderMemories([mem({ kind: "claim", body: long })]);
+  assert.ok(bodyChars(asEpisode) < bodyChars(asClaim),
+    `episode body ${bodyChars(asEpisode)} should be shorter than claim body ${bodyChars(asClaim)}`);
+  assert.ok(bodyChars(asEpisode) <= 220, `episode body was ${bodyChars(asEpisode)} chars`);
+});
+
+test("excerpted episodes say so, and point at recall by id", () => {
+  const out = renderMemories([mem({ kind: "episode", body: "y".repeat(3000) })]);
+  assert.match(out, /excerpted/);
+  assert.match(out, /recall.*by id/i);
+});
+
+test("a claims-only block does not mention excerpting", () => {
+  const out = renderMemories([mem({ kind: "claim", body: "short and complete" })]);
+  assert.doesNotMatch(out, /excerpted/);
+});
