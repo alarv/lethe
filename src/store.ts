@@ -14,6 +14,9 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { MemoryIndex } from "./index-db.js";
+import { rank } from "./rank.js";
+import { log } from "./log.js";
 import {
   existsSync,
   mkdirSync,
@@ -660,11 +663,14 @@ export class Store {
   }
 
   /**
-   * Placeholder retrieval: token overlap, weighted by field. Good enough to
-   * start capturing real sessions; replaced by embeddings once there is data
-   * to evaluate against.
+   * Token-overlap retrieval, weighted by field.
+   *
+   * Retained rather than deleted: it is the fallback when node:sqlite is
+   * unavailable or the index cannot be opened, and the eval needs both
+   * mechanisms in order to attribute an improvement to BM25 rather than to the
+   * other retrieval changes landing alongside it.
    */
-  search(query: string, limit = 8, paths: string[] = []): Memory[] {
+  searchNaive(query: string, limit = 8, paths: string[] = []): Memory[] {
     const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2);
     const rank = (pool: Memory[]) =>
       pool
@@ -685,5 +691,36 @@ export class Store {
       .map((r) => ({ ...r, score: r.score * 0.5 }))
       .slice(0, limit - here.length);
     return [...here, ...elsewhere].map((r) => r.m);
+  }
+
+  /**
+   * Retrieval.
+   *
+   * The index answers how well text matched; rank() decides what deserves to
+   * surface. When the index is unavailable -- an older Node without
+   * node:sqlite, or a file we could not repair -- this falls back to
+   * searchNaive rather than failing. Recall degrading is acceptable; recall
+   * throwing is not.
+   *
+   * Superseded memories are handed to the index rather than filtered out here,
+   * because a cold episode is a route to the claim that replaced it. rank()
+   * resolves them forward.
+   */
+  search(query: string, limit = 8, paths: string[] = []): Memory[] {
+    const index = MemoryIndex.open(join(letheHome(), "index.db"));
+    if (!index) return this.searchNaive(query, limit, paths);
+    try {
+      const pool = [...this.all(), ...this.otherProjects()];
+      index.sync(pool);
+      const byId = new Map(pool.map((m) => [m.id, m]));
+      // Over-fetch: hits that resolve forward collapse onto shared claims, so
+      // asking for exactly `limit` rows can yield fewer than `limit` results.
+      return rank(index.search(query, limit * 4), byId, paths, limit);
+    } catch (e) {
+      log("index", `search failed, falling back to the scorer: ${(e as Error).message}`);
+      return this.searchNaive(query, limit, paths);
+    } finally {
+      index.close();
+    }
   }
 }
