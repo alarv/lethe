@@ -11,11 +11,14 @@
 import type { Memory, Scope, Store } from "./store.js";
 import { log } from "./log.js";
 import { STOP, stem } from "./query.js";
+import { selectForEviction } from "./evict.js";
 
 /** Asks a model for a completion. Supplied by the MCP host via sampling. */
 export type Distiller = (prompt: string) => Promise<string>;
 
 export interface CompactOptions {
+  /** Memories to keep per project before eviction starts. */
+  budget?: number;
   /**
    * Where consolidated claims are written. Cannot be inferred from the source
    * episodes -- those are always stored locally, so they would always say
@@ -405,9 +408,12 @@ export async function compact(
 
   // 3. Decay -----------------------------------------------------------------
   for (const m of store.all()) {
-    if (m.kind === "episode") continue; // episodes are consumed, not decayed
+    // Episodes used to be exempt, on the theory that consolidation would consume
+    // them. It does not delete them -- it marks them cold -- and it needs a
+    // distiller that is often absent, so they accumulated forever. That is how a
+    // project named for forgetting came to never forget.
     const next = decayOne(m, now);
-    if (next < COLD && deep) {
+    if (next < COLD && deep && m.kind !== "episode") {
       report.purged += 1;
       report.changes.push(`purge (cold): "${m.title}"`);
       if (!dryRun) store.remove(m.id);
@@ -420,6 +426,23 @@ export async function compact(
     m.decayedAt = new Date(now).toISOString();
     // Decay is per-machine; writing the memory would dirty a shared file.
     store.saveDynamics(m);
+  }
+
+  // 4. Evict -----------------------------------------------------------------
+  //
+  // Decay lowers strength; this is what acts on it. It runs on the automatic
+  // path rather than only under --deep, because a threshold nobody reaches is
+  // not a policy. Ordered by tier so the cheapest losses go first: a superseded
+  // episode costs a retrieval route while its claim keeps the lesson.
+  for (const { memory, tier: t } of selectForEviction(store.all(), opts.budget)) {
+    report.purged += 1;
+    report.changes.push(`evict (tier ${t}, over budget): "${memory.title}"`);
+    log("compact", `evicting "${memory.title}"`, {
+      kind: memory.kind,
+      tier: t,
+      strength: memory.strength.toFixed(2),
+    });
+    if (!dryRun) store.remove(memory.id);
   }
 
   return report;

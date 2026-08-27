@@ -396,10 +396,31 @@ class Dynamics {
       }
       const union = new Set([...(mine.confirmedBy ?? []), ...(d.confirmedBy ?? [])]);
       mine.confirmedBy = [...union];
-      // Keep the stronger view and the more recent access; these are monotonic
-      // enough that max is the right merge.
+
+      // These only ever increase, so max is the right merge.
       mine.accessCount = Math.max(mine.accessCount, d.accessCount);
-      mine.strength = Math.max(mine.strength, d.strength);
+      if ((d.lastAccessed ?? "") > (mine.lastAccessed ?? "")) {
+        mine.lastAccessed = d.lastAccessed;
+      }
+
+      // Strength is NOT monotonic: reinforcement raises it and decay lowers it.
+      // Max-merging it silently discarded every decay, which is why nothing ever
+      // reached the cold threshold and why a project named for forgetting never
+      // forgot. Decay was computed, reported as decayed, and thrown away here.
+      //
+      // decayedAt marks the epoch a strength belongs to, so the newer epoch wins
+      // outright. Within one epoch both values are reinforcements, and max is
+      // right again. A reinforcement racing a decay in a different epoch is lost,
+      // which is acceptable: it is re-earned on the next access, whereas a lost
+      // decay is permanent.
+      const mineAt = Date.parse(mine.decayedAt);
+      const theirsAt = Date.parse(d.decayedAt);
+      if (theirsAt > mineAt) {
+        mine.strength = d.strength;
+        mine.decayedAt = d.decayedAt;
+      } else if (theirsAt === mineAt) {
+        mine.strength = Math.max(mine.strength, d.strength);
+      }
     }
   }
 }
