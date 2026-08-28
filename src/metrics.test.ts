@@ -106,7 +106,7 @@ test("says so when nothing is driving recall but the model", () => {
   assert.match(formatMetrics(m), /lethe hook show/);
 });
 
-import { composition, formatComposition } from "./metrics.js";
+import { composition, formatComposition, since } from "./metrics.js";
 
 const m2 = (kind: string, supersededBy: string | null = null, salience = 0.5) =>
   ({ kind, supersededBy, salience });
@@ -175,4 +175,30 @@ test("a high-salience store reaches the threshold with fewer episodes", () => {
   const many = composition(Array.from({ length: 8 }, () => m2("episode", null, 0.2)));
   assert.ok(few.pressure > many.pressure,
     "4 important notes should outweigh 8 trivial ones");
+});
+
+test("since keeps only lines from a date onward", () => {
+  const lines = [
+    line("2026-08-25T10:00:00Z", "note", "old"),
+    line("2026-08-27T10:00:00Z", "note", "mid"),
+    line("2026-08-28T10:00:00Z", "note", "new"),
+  ];
+  assert.equal(since(lines, "2026-08-28").length, 1);
+  assert.equal(since(lines, "2026-08-27").length, 2);
+  assert.equal(since(lines, "2026-01-01").length, 3);
+  assert.equal(since(lines, "2030-01-01").length, 0);
+});
+
+// The reason it exists: the test suite once logged to the real store, so counts
+// before that was caught measure fixtures rather than use.
+test("since can exclude a contaminated period from the metrics", () => {
+  const lines = [
+    line("2026-08-27T10:00:00Z", "compact", "rejected unparseable reply: fixture"),
+    line("2026-08-27T10:01:00Z", "compact", "rejected unparseable reply: fixture"),
+    line("2026-08-28T10:00:00Z", "start", "connected  build=b1"),
+    line("2026-08-28T10:01:00Z", "recall", "real question  hits=3"),
+  ];
+  assert.equal(metrics(lines).compactionsFailed, 2, "unfiltered counts the fixtures");
+  assert.equal(metrics(since(lines, "2026-08-28")).compactionsFailed, 0, "filtered does not");
+  assert.equal(metrics(since(lines, "2026-08-28")).recalls, 1);
 });

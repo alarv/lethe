@@ -66,6 +66,19 @@ export function readLog(path = LOG_PATH): string[] {
   return readFileSync(path, "utf8").split("\n").filter(Boolean);
 }
 
+/**
+ * Only the lines from a date onward.
+ *
+ * Exists because history can be untrustworthy in ways deleting it would not fix.
+ * The test suite once logged to the real store, so the counts before that was
+ * caught measure fixtures rather than use; excluding a period is honest, editing
+ * the log would not be. Timestamps are ISO 8601, so a prefix compare is a date
+ * compare.
+ */
+export function since(lines: string[], date: string): string[] {
+  return lines.filter((l) => l.slice(0, date.length) >= date);
+}
+
 export function metrics(lines: string[]): Metrics {
   const entries = parse(lines);
 

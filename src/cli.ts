@@ -7,7 +7,7 @@
  */
 
 import { Store, findProjectRoot, letheHome, memoryDir, readSource, type Scope } from "./store.js";
-import { composition, formatComposition, formatMetrics, metrics, readLog } from "./metrics.js";
+import { composition, formatComposition, formatMetrics, metrics, readLog, since } from "./metrics.js";
 
 /** Mirrors the server's threshold, so status and metrics agree with the trigger. */
 function pressureThreshold(): number {
@@ -34,7 +34,8 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe restart                stop running servers (harness respawns them)
   lethe rules                  append the memory instructions to AGENTS.md
   lethe status                 is it working? counts, pressure, last activity
-  lethe metrics                is it being used? adoption, recall/note balance
+  lethe metrics [--json]       is it being used? adoption, recall/note balance
+       [--since=YYYY-MM-DD]    exclude history you do not trust
   lethe hook prompt            recall for a prompt (for a UserPromptSubmit hook)
   lethe hook show              print the hook config to add to settings.json
   lethe log [-n N]             recent activity
@@ -135,8 +136,19 @@ whether this is what moved adoption.`);
     }
 
     case "metrics": {
-      console.log(formatMetrics(metrics(readLog())));
-      console.log(formatComposition(composition(store.all()), pressureThreshold()));
+      const from = flag(rest, "since");
+      const lines = from ? since(readLog(), from) : readLog();
+      const m = metrics(lines);
+      const c = composition(store.all());
+
+      if (rest.includes("--json")) {
+        // For tracking over time: append a line a day and the trend is visible
+        // without anyone having to remember what last week's numbers were.
+        console.log(JSON.stringify({ at: new Date().toISOString(), ...m, since: from ?? null, composition: c }));
+        return;
+      }
+      console.log(formatMetrics(m) + (from ? `\n\n  counting from ${from} onward.` : ""));
+      console.log(formatComposition(c, pressureThreshold()));
       return;
     }
 
