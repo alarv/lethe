@@ -43,7 +43,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test \"dist/**/*.test.js\"",
+    "test": "npm run build && LETHE_HOME=\"${TMPDIR:-/tmp}/lethe-test-$$\" node --test \"dist/**/*.test.js\"",
     "assets": "sh scripts/assets.sh",
     "eval": "node --experimental-strip-types evals/run.ts",
     "prepublishOnly": "npm run build"
