@@ -22,8 +22,12 @@ evals/results/
 # Chrome renders at 2x; keep the committed PNG but not scratch renders
 assets/*.tmp.png
 
-# lethe memories stay on this machine; config.json is shared
-.lethe/memory/
+# lethe: consolidated claims are committed, so anyone cloning this repo
+# inherits what has been learned. Uncomment to keep them on this machine:
+# .lethe/memory/
+#
+# Episodes are not listed here because they are never in the repo -- they live
+# in ~/.lethe/projects/<key>/ regardless of scope.
 
 # Session handoff note, not part of the project.
 docs/lethe.md
@@ -33,3 +37,6 @@ docs/lethe.md
 # to someone finding the repository. The decisions that matter get written
 # up in docs/ and in commit messages instead.
 docs/superpowers/
+
+# JetBrains project files, local to this machine.
+.idea/

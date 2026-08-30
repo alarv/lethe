@@ -15,7 +15,8 @@ function pressureThreshold(): number {
   return Number.isFinite(n) && n > 0 ? n : 6;
 }
 import { promptHook } from "./hook.js";
-import { defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, writeConfig } from "./config.js";
+import { PLACEMENTS, choose } from "./prompt.js";
+import { claimSharing, configSources, defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, writeConfig } from "./config.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -39,15 +40,17 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe hook prompt            recall for a prompt (for a UserPromptSubmit hook)
   lethe hook show              print the hook config to add to settings.json
   lethe log [-n N]             recent activity
-  lethe init [--private]       set up memory for this project
-       [--scope=S] [--global]
+  lethe init                   set up memory for this project (asks where)
+       [--scope=S] [--global]  answer up front instead of being asked
+       [--private]             with --scope=team: in the repo, but git-ignored
   lethe projects               every project with stored memory
   lethe where                  show where memory is stored
   lethe compact [--dry-run]    consolidate, promote, decay
 
-  scopes:
+  scopes decide where *claims* go. Episodes are always private to you, in
+  ~/.lethe, and are never written to a repository:
     local     this repo, private to you, in ~/.lethe   (default)
-    team      committed to the repo, shared
+    team      in the repo, committed unless --private
     personal  you, across every repo
 
 `;
@@ -185,6 +188,45 @@ whether this is what moved adoption.`);
         console.log(`     note       not a git repo; memory is keyed to this directory`);
       }
 
+      // Which config won is invisible otherwise, and "I set team scope and it
+      // did not take" is unanswerable without it -- a global file and a
+      // project file can both exist and say different things.
+      const sources = configSources().filter((s) => s.exists);
+      const winner = [...sources].reverse().find((s) => s.scope);
+      console.log(`${ok(true)} scope      ${defaultScope()}${winner ? "" : " (built-in default; no config file)"}`);
+      for (const s of sources) {
+        const mark = s === winner ? "<-" : "  ";
+        console.log(`     config     ${s.path}  scope=${s.scope ?? "unset"} ${mark}`);
+      }
+
+      // Scope decides where claims are written; .gitignore decides who can
+      // read them. When those disagree the store looks shared and is not.
+      if (root && defaultScope() === "team") {
+        const sh = claimSharing(root);
+        const bad = sh.state === "ignored";
+        console.log(`${bad ? "FAIL" : sh.state === "untracked" ? "warn" : "ok  "} sharing    ${
+          sh.state === "shared" ? `${sh.tracked} claim(s) committed`
+          : sh.state === "ignored" ? "team scope, but git ignores the claims"
+          : sh.state === "untracked" ? `${sh.files} claim(s) written but not committed yet`
+          : sh.state === "empty" ? "no claims yet"
+          : "could not ask git"}`);
+        if (bad) {
+          problems.push(
+            "Scope is `team`, so claims are written into this repository, but\n" +
+            "  .gitignore excludes .lethe/memory/ -- nobody else will ever see\n" +
+            `  them. ${sh.files} claim(s) are affected. Either remove that line and commit\n` +
+            "  them, or run `lethe init --scope=local` so they stop being written\n" +
+            "  somewhere that implies sharing.",
+          );
+        }
+        if (sh.state === "untracked") {
+          problems.push(
+            `${sh.files} claim(s) are in the repo and not ignored, but have never been\n` +
+            "  committed. `git add .lethe/memory` to share what has been learned.",
+          );
+        }
+      }
+
       const d = await resolveDistiller();
       console.log(`${ok(!!d)} distiller  ${d ? d.via : "none"}`);
       if (!d) {
@@ -311,9 +353,42 @@ whether this is what moved adoption.`);
     }
 
     case "init": {
-      const want = (flag(rest, "scope") as Scope | undefined) ?? "team";
-      const isGlobal = rest.includes("--global");
+      const explicit = flag(rest, "scope") as Scope | undefined;
       const root = findProjectRoot();
+      let isGlobal = rest.includes("--global");
+      let want: Scope;
+      let share: boolean;
+
+      // Ask only when nothing was specified and there is someone to ask, so
+      // scripts, CI and `lethe init --scope=team` behave exactly as before.
+      if (!explicit && !isGlobal && process.stdin.isTTY) {
+        const options = PLACEMENTS.filter((p) => root || !p.needsRepo);
+        if (options.length < PLACEMENTS.length) {
+          console.log("not a git repository, so the in-repo options are unavailable here.\n");
+        }
+        const pick = await choose("where should the agent's consolidated claims go?", options);
+        if (pick === null) {
+          console.log("\ncancelled; nothing written.");
+          return;
+        }
+        const p = options[pick]!;
+        want = p.scope;
+        share = p.share;
+        console.log("");
+        const applyTo = await choose("apply this to", [
+          { label: "this project only", detail: `writes ${projectConfigPath() ?? globalConfigPath()}` },
+          { label: "every project", detail: "the default from now on; a project's own config still wins" },
+        ]);
+        if (applyTo === null) {
+          console.log("\ncancelled; nothing written.");
+          return;
+        }
+        isGlobal = applyTo === 1;
+        console.log("");
+      } else {
+        want = explicit ?? "team";
+        share = !rest.includes("--private");
+      }
 
       if (want === "team" && !root && !isGlobal) {
         console.error("team scope stores memory in the repository, and this is not one.");
@@ -328,21 +403,30 @@ whether this is what moved adoption.`);
       writeConfig(path, { scope: want });
       console.log(`${isGlobal ? "global" : "project"} config  ${path}`);
       console.log(`default scope  ${want}`);
-      console.log(`memory goes to ${memoryDir(want)}`);
 
       // Storing in the repo and committing it are separate choices.
-      if (want === "team" && root) {
-        const share = !rest.includes("--private");
-        const r = ignoreInGit(root, share);
+      const r = want === "team" && root ? ignoreInGit(root, share) : null;
+
+      // Always say where both kinds land. Scope only governs claims, and
+      // leaving that implicit is what makes people go looking for their
+      // episodes in a repository that has never held any.
+      console.log("");
+      if (want !== "team" || root) {
+        console.log(`claims    ${memoryDir(want)}`);
+      }
+      console.log(`episodes  ${memoryDir("local")}`);
+      console.log("          raw and private to you -- never written to a repo, whatever the scope");
+
+      if (r) {
         console.log("");
-        console.log("episodes   private to you, never committed");
         console.log(share
-          ? "claims     committed — the team inherits what has been learned"
-          : "claims     kept local — uncomment .lethe/memory/ in .gitignore to share");
+          ? "committed -- the team inherits what has been learned"
+          : "git-ignored -- uncomment .lethe/memory/ in .gitignore to share them");
         if (r === "present") console.log("\n.gitignore already had a lethe section; left alone.");
         else if (r === "failed") console.log("\ncould not write .gitignore.");
         if (share) console.log("\nre-run with --private to keep claims off the repo.");
       }
+      console.log("\n`lethe doctor` will tell you if git ends up disagreeing with this.");
       return;
     }
 
@@ -371,11 +455,17 @@ whether this is what moved adoption.`);
     case "where": {
       const root = findProjectRoot();
       console.log(`repo      ${root ?? "(not in a git repo)"}`);
-      if (root) {
-        console.log(`local     ${memoryDir("local")}`);
-        console.log(`team      ${memoryDir("team")}`);
-      }
-      console.log(`personal  ${memoryDir("personal")}`);
+      console.log("");
+
+      // Listing the three scopes alone reads as "a memory could be in any of
+      // these", which is not true: only claims move.
+      console.log(`episodes  ${memoryDir("local")}`);
+      console.log(`          always here, whatever the scope; never in a repo`);
+      console.log("");
+      console.log(`claims    go to the configured scope, currently ${defaultScope()}`);
+      console.log(`  local     ${memoryDir("local")}`);
+      if (root) console.log(`  team      ${memoryDir("team")}`);
+      console.log(`  personal  ${memoryDir("personal")}`);
       return;
     }
 

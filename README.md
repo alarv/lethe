@@ -100,6 +100,44 @@ npx @alarv/lethe doctor
 Needs Node 22+. On older versions retrieval falls back to a simpler ranker rather than
 failing.
 
+### Decide where memory lives
+
+Run this once per project — it asks, and writes the answer to `.lethe/config.json`:
+
+```sh
+npx @alarv/lethe init
+```
+
+```
+where should the agent's consolidated claims go?
+
+  1  in this repo, committed      your team inherits them; you review them in diffs
+  2  in this repo, git-ignored    you read them in your editor; nobody else sees them
+  3  outside the repo            in ~/.lethe, keyed to this project; the repo is left alone
+  4  with you, in every project  in ~/.lethe/memory; follows you rather than the code
+```
+
+It then asks whether that applies to this project or becomes your default everywhere.
+To skip the questions — in a script, or because you already know:
+
+```sh
+lethe init --scope=team              # in this repo, committed
+lethe init --scope=team --private    # in this repo, git-ignored
+lethe init --scope=local             # outside the repo (the default)
+lethe init --global --scope=team     # make it the default for every project
+```
+
+Config is read from `~/.lethe/config.json` first, then `<repo>/.lethe/config.json`, so a
+project can always override your global default. `lethe doctor` prints both files and
+marks which one won.
+
+**This only decides where *claims* go.** Episodes — the raw, verbose record of what
+happened in a session — always live in `~/.lethe/projects/<project>/`, are private to
+you, and are never written into a repository whatever the scope says. `lethe where` shows
+both. Choosing `team` and then git-ignoring `.lethe/memory/` is the one genuinely
+confusing state: the claims sit in your repo looking shared and are committed nowhere.
+`lethe doctor` fails loudly on it.
+
 ### One more step, and it's the one that matters
 
 Left to itself, an agent mostly *doesn't* call a memory tool — it has other things on its
@@ -148,9 +186,10 @@ Readable, diffable, reviewable in a pull request. `git blame` works on your agen
 memory. Nothing is locked in a database you can't inspect — and if you delete lethe
 tomorrow, you keep the markdown.
 
-By default memories stay on your machine (`~/.lethe/`). Opt into `team` scope and claims
-land in the repo, so your team reviews what the agent learned before it becomes shared
-knowledge.
+By default everything stays on your machine (`~/.lethe/`). Opt into `team` scope and
+*claims* land in the repo, so your team reviews what the agent learned before it becomes
+shared knowledge — see [Decide where memory lives](#decide-where-memory-lives). Episodes
+never move: they are a private scratchpad that consolidation eventually consumes.
 
 ### Day to day
 

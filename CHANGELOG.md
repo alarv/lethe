@@ -11,6 +11,35 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`lethe init` no longer writes a `.gitignore` line for `.lethe/episodes/`.** That
+  directory has never existed — episodes live in `~/.lethe/projects/<key>/` whatever the
+  scope says — so the line protected nothing while telling the reader, under the heading
+  "private working memory, never shared", that their raw session notes were sitting in
+  the repository waiting to be committed.
+
+### Added
+
+- **`lethe init` asks where claims should go**, in terms of who ends up able to read them
+  rather than in terms of a scope name: in this repo committed, in this repo git-ignored,
+  outside the repo, or with you across every project. It then asks whether that is a
+  setting for this project or your default everywhere. `--scope` and `--private` still
+  work and skip the questions, so scripts and CI are unaffected.
+- **`lethe doctor` reports which config file won.** A global `~/.lethe/config.json` and a
+  project `.lethe/config.json` can disagree, and until now nothing could answer "I set
+  team scope and it did not take".
+- **`lethe doctor` fails when scope and git disagree.** `team` scope decides where claims
+  are *written*; `.gitignore` decides who can *read* them. A repo configured for team
+  scope with `.lethe/memory/` ignored looks shared and is committed nowhere — which is
+  what this repository was doing to its own nine claims. Claims written but never
+  committed are reported as a warning rather than a failure.
+
+### Changed
+
+- **`lethe init` and `lethe where` always say where episodes live**, not just claims.
+  Listing three scopes implied a memory could be in any of them; only claims move.
+
 ## [0.0.2] — 2026-08-27
 
 Documentation and CI. No behaviour changes.
