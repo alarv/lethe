@@ -39,6 +39,9 @@ The release workflow refuses to publish a version with no section here.
 
 - **`lethe init` and `lethe where` always say where episodes live**, not just claims.
   Listing three scopes implied a memory could be in any of them; only claims move.
+- **`lethe init --global` run inside a repo that overrides the global default now says
+  so**, and prints the paths that directory will actually use rather than the ones the
+  global setting implies.
 
 ## [0.0.2] — 2026-08-27
 

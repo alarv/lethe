@@ -404,6 +404,16 @@ whether this is what moved adoption.`);
       console.log(`${isGlobal ? "global" : "project"} config  ${path}`);
       console.log(`default scope  ${want}`);
 
+      // Setting a global default from inside a repo that overrides it would
+      // otherwise print paths that this directory will never use.
+      const effective = defaultScope();
+      const overridden = isGlobal && effective !== want;
+      if (overridden) {
+        console.log(`\nthis repo overrides it with scope=${effective} in ${projectConfigPath()},`);
+        console.log(`so the paths below are the ones it will actually use.`);
+      }
+      const shown = overridden ? effective : want;
+
       // Storing in the repo and committing it are separate choices.
       const r = want === "team" && root ? ignoreInGit(root, share) : null;
 
@@ -411,8 +421,8 @@ whether this is what moved adoption.`);
       // leaving that implicit is what makes people go looking for their
       // episodes in a repository that has never held any.
       console.log("");
-      if (want !== "team" || root) {
-        console.log(`claims    ${memoryDir(want)}`);
+      if (shown !== "team" || root) {
+        console.log(`claims    ${memoryDir(shown)}`);
       }
       console.log(`episodes  ${memoryDir("local")}`);
       console.log("          raw and private to you -- never written to a repo, whatever the scope");
