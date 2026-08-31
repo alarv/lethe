@@ -26,6 +26,11 @@ The release workflow refuses to publish a version with no section here.
   overwriting a `.lethe/.gitignore` it did not write. A stale `.lethe/` rule left in your
   root by an older version is overridden by the nested file, so nothing breaks on
   upgrade; `lethe init` points at it so you can delete it.
+- **`lethe init` and `lethe where` always say where episodes live**, not just claims.
+  Listing three scopes implied a memory could be in any of them; only claims move.
+- **`lethe init --global` run inside a repo that overrides the global default now says
+  so**, and prints the paths that directory will actually use rather than the ones the
+  global setting implies.
 
 ### Fixed
 
@@ -56,14 +61,6 @@ The release workflow refuses to publish a version with no section here.
   scope with `.lethe/memory/` ignored looks shared and is committed nowhere — which is
   what this repository was doing to its own nine claims. Claims written but never
   committed are reported as a warning rather than a failure.
-
-### Changed
-
-- **`lethe init` and `lethe where` always say where episodes live**, not just claims.
-  Listing three scopes implied a memory could be in any of them; only claims move.
-- **`lethe init --global` run inside a repo that overrides the global default now says
-  so**, and prints the paths that directory will actually use rather than the ones the
-  global setting implies.
 
 ## [0.0.2] — 2026-08-27
 
