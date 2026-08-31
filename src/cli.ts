@@ -24,6 +24,8 @@ import { join } from "node:path";
 import { LOG_PATH, buildStamp, logging, tail } from "./log.js";
 import { human, prune, survey } from "./maintain.js";
 import { describeDistiller, resolveDistiller } from "./distil.js";
+import { facts, seed, writeWatermark } from "./learn.js";
+import { spinning, task } from "./progress.js";
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
 
@@ -45,6 +47,7 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
        [--share] [--private]   answer up front instead of being asked
        [--global]              set the default for projects that have not chosen
        [--debug|--no-debug]    record activity to ~/.lethe/lethe.log (off by default)
+  lethe learn [--dry-run]      seed memory from this repo's own conventions
   lethe projects               every project with stored memory
   lethe where                  show where memory is stored
   lethe compact [--dry-run]    consolidate, promote, decay
@@ -62,6 +65,45 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
 function flag(args: string[], name: string): string | undefined {
   const hit = args.find((a) => a.startsWith(`--${name}=`));
   return hit?.split("=")[1];
+}
+
+/**
+ * Seed memory from the repo, reported the same way from `init` and `learn`.
+ *
+ * Shared so setup and the standalone command cannot drift into describing the
+ * same operation differently -- the whole point of the seed is that a user
+ * understands what got written without going to look.
+ */
+function reportSeed(store: Store, root: string, dryRun: boolean): void {
+  const found = facts(root);
+  if (!found.length) {
+    console.log("memory    nothing recognisable to seed from -- no package.json, Makefile,");
+    console.log("          pyproject.toml or CI workflow found. Memory starts empty and");
+    console.log("          fills up as work happens.");
+    return;
+  }
+
+  const t = task("reading this repo", { total: found.length });
+  const report = seed(store, root, { dryRun, onFact: () => t.step() });
+  t.done();
+
+  const wrote = report.written + report.revised;
+  const verb = dryRun ? "would seed" : "seeded";
+  console.log(`memory    ${verb} ${wrote} claim(s) from ${report.sources.join(", ")}` +
+    `${report.unchanged ? `, ${report.unchanged} already current` : ""}`);
+  console.log("          how to build, test and check here -- the things an agent otherwise");
+  console.log("          rediscovers by reading three files. Weak on purpose: a seed nobody");
+  console.log("          recalls decays out in about two months, so a wrong guess expires.");
+
+  if (!dryRun) {
+    writeWatermark(root, {
+      at: new Date().toISOString(),
+      seeded: wrote,
+      // History distillation needs a model and is not built yet; recording null
+      // rather than a commit keeps the field honest about what has been read.
+      historyThrough: null,
+    });
+  }
 }
 
 async function main(): Promise<void> {
@@ -246,7 +288,9 @@ whether this is what moved adoption.`);
         }
       }
 
-      const d = await resolveDistiller();
+      // Probing costs a few `which` calls and a 1.5s reach for ollama, which
+      // until now happened in silence in the middle of doctor's output.
+      const d = await spinning("looking for a model", () => resolveDistiller());
       console.log(`${ok(!!d)} distiller  ${d ? d.via : "none"}`);
       if (!d) {
         problems.push(
@@ -492,7 +536,30 @@ whether this is what moved adoption.`);
         for (const l of staleRules) console.log(`  ${l.trim()}`);
       }
 
+      // Seeding runs unconditionally, because it needs no model, no network and
+      // no permission beyond the decision just made -- so there is nothing to
+      // ask about and nothing that can fail. It is also the whole reason `init`
+      // is worth running: without it lethe helps on day 30 and not day 1, and an
+      // empty store teaches the agent to stop calling recall.
+      console.log("");
+      reportSeed(store, root!, false);
+
       console.log("\n`lethe doctor` will tell you if git ends up disagreeing with this.");
+      return;
+    }
+
+    case "learn": {
+      const root = findProjectRoot();
+      if (!root) {
+        console.log("not a git repository, so there is no repo to learn from.");
+        return;
+      }
+      const dryRun = rest.includes("--dry-run");
+      console.log(`repo      ${root}`);
+      reportSeed(store, root, dryRun);
+      console.log("");
+      console.log("re-runnable: each fact has a stable key, so this revises what it wrote");
+      console.log("last time instead of writing a second copy beside it.");
       return;
     }
 
@@ -659,11 +726,14 @@ whether this is what moved adoption.`);
     case "compact": {
       const resolved = await resolveDistiller();
       if (resolved) console.log(`distilling via ${resolved.via}\n`);
-      const r = await compact(store, {
+      // A single model call cannot report a fraction, so this is a spinner with
+      // an elapsed clock against the distiller's own timeout -- the number worth
+      // seeing is how close it is to giving up, not an invented percentage.
+      const r = await spinning("consolidating", () => compact(store, {
         ...(resolved ? { distil: resolved.distil } : {}),
         dryRun: rest.includes("--dry-run"),
         deep: rest.includes("--deep"),
-      });
+      }), resolved ? { deadline: 90 } : {});
       console.log(formatReport(r));
       if (rest.includes("--dry-run")) console.log("\n  (dry run -- nothing was written)");
       return;
