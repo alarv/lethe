@@ -71,6 +71,15 @@ The release workflow refuses to publish a version with no section here.
   overwriting a `.lethe/.gitignore` it did not write. A stale `.lethe/` rule left in your
   root by an older version is overridden by the nested file, so nothing breaks on
   upgrade; `lethe init` points at it so you can delete it.
+
+  The file itself is always committed, even when the memories are not. Having private mode
+  ignore it too leaves a perfectly clean `git status` and was briefly implemented that
+  way; it is unsafe, because untracking an already-tracked file is a change other people
+  receive. A teammate's `git pull` deletes their copy, the rules vanish from their working
+  tree, and *their* private memories stop being ignored. A local checkout spanning the
+  untracking commit does the same thing, which is how it was caught — in this repository,
+  with eleven claims briefly unignored. One committed file saying "ignore everything here"
+  is a fair price.
 - **`lethe init` and `lethe where` always say where episodes live**, not just claims.
   Listing candidate locations implied a memory could be in any of them, which was never
   true: the kind decides.

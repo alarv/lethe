@@ -105,19 +105,24 @@ export type IgnoreResult = "added" | "updated" | "present" | "foreign" | "failed
 /**
  * The one decision in the file: uncommented, claims are committed.
  *
- * `!.gitignore` is part of it. When claims are private, nothing in `.lethe/`
- * is git's business -- including this file -- and a .gitignore applies to its
- * own directory whether or not git tracks it. Leaving it un-ignored meant
- * `lethe init --private` still left `?? .lethe/` sitting in `git status`, which
- * is precisely the "discover it in git status" outcome the layout exists to
- * avoid. When claims are shared the rules have to travel with the repo, so it
- * comes back.
+ * `!.gitignore` is deliberately NOT part of it -- this file is always meant to
+ * be committed, even when the memories are not.
+ *
+ * Having private mode ignore this file too is tempting, because it leaves
+ * `git status` perfectly clean, and it was briefly implemented that way. It is
+ * unsafe in the case the tool exists for. Untracking a file that is already
+ * tracked is a change other people receive: a teammate's `git pull` deletes
+ * their copy, so the rules vanish from their working tree and *their* private
+ * memories stop being ignored. It bites locally too -- a checkout that spans the
+ * untracking commit removes the file and exposes everything under `.lethe/`,
+ * which is how this was found.
+ *
+ * So the deal is: one committed file saying "ignore everything in here", and the
+ * memories themselves stay out of git. The cost is that a repository reveals
+ * lethe is in use, which is not a secret worth this failure mode.
  */
-const CLAIM_LINES = ["!.gitignore", "!memory/", "!memory/*.md"];
-const CLAIM_PATTERN = /^\s*(#\s*)?!(memory\/|\.gitignore\s*$)/;
-
-/** Only the memory lines answer "is this shared"; .gitignore follows them. */
-const SHARED_PATTERN = /^\s*!memory\//;
+const CLAIM_LINES = ["!memory/", "!memory/*.md"];
+const CLAIM_PATTERN = /^\s*(#\s*)?!memory\//;
 
 function renderIgnore(share: boolean): string {
   return [
@@ -125,15 +130,19 @@ function renderIgnore(share: boolean): string {
     "# edits a .gitignore you own, and `rm -rf .lethe` leaves nothing behind.",
     "#",
     "# Everything is ignored by default, so anything a later version writes here",
-    "# cannot reach a commit by accident. The ! lines below are the whole",
+    "# cannot reach a commit by accident. The two !memory lines are the whole",
     "# decision: uncommented, consolidated claims are committed and anyone",
     "# cloning this repo inherits what has been learned; commented out, they",
-    "# stay on this machine, and so does this file -- git sees no .lethe/ at all.",
+    "# stay on this machine and only you can read them.",
+    "#",
+    "# This file itself is always committed, even when the memories are not, so",
+    "# that the rules cannot go missing from anyone's working tree.",
     "#",
     "# Episodes are not listed because they are never here -- they live in",
     "# ~/.lethe/projects/<key>/, keyed to this project.",
     "",
     "*",
+    "!.gitignore",
     ...CLAIM_LINES.map((l) => (share ? l : `# ${l}`)),
     "",
   ].join("\n");
@@ -153,7 +162,7 @@ export function ignoreInGit(root: string, share: boolean): IgnoreResult {
     // hand survive `lethe init` being run again.
     const lines = readFileSync(path, "utf8").split("\n");
     if (!lines.some((l) => CLAIM_PATTERN.test(l))) return "foreign";
-    const shared = lines.some((l) => SHARED_PATTERN.test(l));
+    const shared = lines.some((l) => /^\s*!memory\//.test(l));
     if (shared === share) return "present";
 
     const next = lines.map((l) =>

@@ -136,9 +136,9 @@ lethe init --global --share      # what projects that have not chosen start from
 ```
 
 Both answers write to the same directory, so **changing your mind later moves no files**:
-it comments three lines in `.lethe/.gitignore` in or out. That file, not a config
-setting, is the decision — which is why nothing can disagree with it. `lethe doctor` asks
-git what actually happened.
+it comments two lines in `.lethe/.gitignore` in or out. That file, not a config setting,
+is the decision — which is why nothing can disagree with it. `lethe doctor` asks git what
+actually happened.
 
 **lethe never edits your root `.gitignore`.** The rules live in `.lethe/.gitignore`,
 which governs its own directory — so the whole install is one folder, and uninstalling
@@ -146,17 +146,20 @@ is `rm -rf .lethe`:
 
 ```gitignore
 *
-!.gitignore       # comment all three out and git sees no .lethe/ at all
-!memory/
+!.gitignore
+!memory/          # comment these two out and claims stay on this machine
 !memory/*.md
 ```
 
 It's a whitelist, so anything a later version writes into that directory is ignored by
-default rather than turning up in someone's commit. Those three lines are the entire
-sharing decision; `lethe init` toggles them and leaves any line you added by hand alone.
-When they are commented out, this file ignores itself too — a `.gitignore` applies to its
-own directory whether or not git tracks it — so `git status` stays completely clean and
-private memory is not something you discover in a diff.
+default rather than turning up in someone's commit. Those two lines are the entire sharing
+decision; `lethe init` toggles them and leaves any line you added by hand alone.
+
+**Commit `.lethe/.gitignore` even when the memories are private.** It is what keeps them
+out of git, and it has to be present in everyone's working tree to do that — including
+people who never chose it. If it were ignored too, untracking it would be a change others
+receive: a `git pull` would delete their copy and their own private memories would stop
+being ignored.
 
 **Episodes are not part of this decision.** The raw, verbose record of what happened in
 a session always lives in `~/.lethe/projects/<project>/`, is private to you, and is never

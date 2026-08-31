@@ -278,32 +278,53 @@ test("shareDefault reads only the global file, and only `share`", () => {
   });
 });
 
-// -------------------------------------------- private means git sees nothing
+// ------------------------------------- private hides memories, not the rules
 
-test("private claims leave git status completely clean", () => {
+test("private mode hides the memories and commits nothing else", () => {
   withRepo((root) => {
     ignoreInGit(root, false);
     writeClaim(root, "a-one.md");
-    const status = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
-    // `?? .lethe/` used to show up here, because .lethe/.gitignore was itself
-    // un-ignored. Choosing "in the repo, git-ignored" and then finding the repo
-    // dirty is the outcome the whole layout exists to prevent.
-    assert.equal(status.trim(), "");
+    // -uall, because git collapses a wholly-untracked directory to `?? .lethe/`
+    // and the whole question is which files inside it are visible.
+    const status = execFileSync("git", ["status", "--porcelain", "-uall"],
+      { cwd: root, encoding: "utf8" });
+
+    // The rules file is expected to show up -- it is meant to be committed. No
+    // memory may ever appear, which is the property that matters.
+    assert.equal(status.includes("memory"), false, `a claim reached git status:\n${status}`);
+    assert.match(status, /\.lethe\/\.gitignore/);
   });
 });
 
-test("sharing brings the ignore file back so the rules travel with the repo", () => {
+test("the ignore file is never ignored, in either mode", () => {
+  // It was, briefly. Untracking a file that is already tracked is a change other
+  // people receive: a teammate's pull deletes their copy, the rules vanish from
+  // their working tree, and *their* private memories stop being ignored. A
+  // checkout spanning the untracking commit does the same thing locally, which
+  // is how it was caught.
   withRepo((root) => {
-    ignoreInGit(root, false);
-    assert.equal(ignoreInGit(root, true), "updated");
-    const lines = readFileSync(join(root, ".lethe", ".gitignore"), "utf8").split("\n");
-    assert.ok(lines.includes("!.gitignore"), "a clone needs the rules to arrive with it");
-    assert.ok(lines.includes("!memory/"));
+    for (const share of [true, false]) {
+      ignoreInGit(root, share);
+      const lines = readFileSync(join(root, ".lethe", ".gitignore"), "utf8").split("\n");
+      assert.ok(lines.includes("!.gitignore"),
+        `share=${share}: the rules must stay readable by git`);
+      assert.equal(lines.includes("# !.gitignore"), false);
+    }
+  });
+});
 
-    // And back again, in place.
-    assert.equal(ignoreInGit(root, false), "updated");
+test("only the memory lines toggle, and they toggle in place", () => {
+  withRepo((root) => {
+    assert.equal(ignoreInGit(root, false), "added");
     const off = readFileSync(join(root, ".lethe", ".gitignore"), "utf8").split("\n");
-    assert.ok(off.includes("# !.gitignore"));
     assert.ok(off.includes("# !memory/"));
+    assert.ok(off.includes("# !memory/*.md"));
+
+    assert.equal(ignoreInGit(root, true), "updated");
+    const on = readFileSync(join(root, ".lethe", ".gitignore"), "utf8").split("\n");
+    assert.ok(on.includes("!memory/"));
+    assert.ok(on.includes("!memory/*.md"));
+
+    assert.equal(ignoreInGit(root, true), "present", "no change needed twice");
   });
 });

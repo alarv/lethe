@@ -468,8 +468,9 @@ whether this is what moved adoption.`);
       console.log(`episodes  ${episodeDir()}`);
       console.log("          raw and private to you -- never written to a repo");
       console.log("");
-      console.log(`the ! lines in ${join(root!, ".lethe", ".gitignore")} are the whole decision,`);
-      console.log("so changing your mind later moves no files.");
+      console.log(`the two !memory/ lines in ${join(root!, ".lethe", ".gitignore")} are the whole`);
+      console.log("decision, so changing your mind later moves no files. Commit that file:");
+      console.log("it is what keeps the memories out of git, on your machine and everyone else's.");
 
       if (r === "added") console.log("\nwrote that file; lethe never touches your root .gitignore.");
       else if (r === "updated") console.log("\nflipped the !memory/ lines in the existing file.");
