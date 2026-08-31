@@ -6,45 +6,43 @@
  * they are the only place a user is told where their memory goes.
  */
 
-import type { Scope } from "./store.js";
-
 /**
- * The four things someone can actually want, named by outcome.
+ * The only decision left, named by outcome.
  *
- * Scope alone describes none of them: "in the repo, committed" and "in the
- * repo, git-ignored" are the same scope and differ only in .gitignore. That is
- * precisely the distinction people were losing, so the question is asked in
- * terms of who ends up able to read the files rather than in terms of a word
- * that has to be looked up first.
+ * Both options write to the same directory -- `<repo>/.lethe/memory/` -- and
+ * differ solely in whether git carries the files. That is why there is nothing
+ * else to ask: where a memory goes is derived from what it is, so the one
+ * remaining question is who gets to read the claims.
+ *
+ * This used to be four options spanning three scope words, two of which were
+ * the same scope differing only by a .gitignore line. Nobody could keep that
+ * straight, the author included.
+ *
+ * "best for a private repo" is in the first option because the audience for
+ * committed memory is whoever can clone the repository, which in a public one is
+ * everybody. Claims are distilled from sessions and routinely name internal
+ * services, deploy steps and the shape of decisions -- none of it secret, all of
+ * it context you probably did not mean to publish. lethe cannot check visibility
+ * for you: it is a property of the host, not of the checkout, and asking GitHub
+ * would mean a network call and a token during setup. So it says so and lets you
+ * decide.
  */
 export interface Placement {
   label: string;
   detail: string;
-  scope: Scope;
   share: boolean;
-  needsRepo: boolean;
 }
 
 export const PLACEMENTS: Placement[] = [
   {
-    label: "in this repo, committed",
-    detail: "your team inherits them; you review them in diffs",
-    scope: "team", share: true, needsRepo: true,
+    label: "committed",
+    detail: "anyone who can clone this repo inherits them; best for a private repo",
+    share: true,
   },
   {
-    label: "in this repo, git-ignored",
-    detail: "you read them in your editor; nobody else sees them",
-    scope: "team", share: false, needsRepo: true,
-  },
-  {
-    label: "outside the repo",
-    detail: "in ~/.lethe, keyed to this project; the repo is left alone",
-    scope: "local", share: false, needsRepo: false,
-  },
-  {
-    label: "with you, in every project",
-    detail: "in ~/.lethe/memory; follows you rather than the code",
-    scope: "personal", share: false, needsRepo: false,
+    label: "git-ignored",
+    detail: "you read them in your editor; nobody else ever sees them",
+    share: false,
   },
 ];
 

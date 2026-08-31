@@ -5,7 +5,7 @@ import type { Memory } from "./store.js";
 
 function mem(over: Partial<Memory> & { id: string }): Memory {
   return {
-    kind: "episode", scope: "local", title: over.id, body: "b", tags: [], files: [],
+    kind: "episode", title: over.id, body: "b", tags: [], files: [],
     salience: 0.5, strength: 1, decayedAt: "2026-01-01T00:00:00Z", accessCount: 0,
     created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
     lastAccessed: null, provenance: [], supersededBy: null, author: "a",

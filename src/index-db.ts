@@ -18,7 +18,6 @@
  * with store.ts and risk deadlocking module evaluation.
  */
 
-import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { existsSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
@@ -27,12 +26,39 @@ import type { Memory } from "./store.js";
 import { matchExpression, terms } from "./query.js";
 import { log } from "./log.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 4;
 
 export interface Hit {
   id: string;
   relevance: number;
   supersededBy: string | null;
+  /** Where the markdown is, so the caller can load this one and no others. */
+  path: string;
+  /** Source path of the project it came from, or "" for the current one. */
+  project: string;
+}
+
+/**
+ * A candidate file, described without being read.
+ *
+ * `mtimeMs` and `size` are the change signal, and the whole point: deciding
+ * what to index used to require reading and parsing every memory in every
+ * project on every query. Measured on a 36,000-memory store, that was 4.4
+ * seconds per recall; stat-ing the same files costs 120ms and reading only the
+ * hits costs about one.
+ */
+export interface IndexFile {
+  path: string;
+  mtimeMs: number;
+  size: number;
+  project: string;
+}
+
+/** What a row already in the index says about the file behind it. */
+interface Known {
+  rowid: number;
+  mtime: number;
+  size: number;
 }
 
 /** Only what we use, so the experimental surface we depend on stays visible. */
@@ -109,84 +135,132 @@ export class MemoryIndex {
       content='', contentless_delete=1, tokenize='porter unicode61')`);
     db.exec(`CREATE TABLE IF NOT EXISTS memories (
       rowid INTEGER PRIMARY KEY,
-      id TEXT UNIQUE NOT NULL,
+      id TEXT NOT NULL,
+      path TEXT UNIQUE NOT NULL,
+      mtime REAL NOT NULL,
+      size INTEGER NOT NULL,
       project TEXT NOT NULL,
-      scope TEXT NOT NULL,
       kind TEXT NOT NULL,
       updated TEXT NOT NULL,
       superseded_by TEXT)`);
+    // Lookups by id resolve a hit's successor, which is the one thing the
+    // ranker needs that the hit itself does not carry.
+    db.exec("CREATE INDEX IF NOT EXISTS memories_id ON memories(id)");
     db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
     return db;
   }
 
   /**
-   * A fingerprint of the corpus, so an unchanged store costs no writes.
+   * Bring the index in line with the markdown, touching only what moved.
    *
-   * Hashes the indexed content, not ids and timestamps. Store.write does not
-   * bump `updated`, so a caller that edits a body and writes it back leaves
-   * every timestamp identical -- and a timestamp fingerprint would then skip the
-   * rebuild and leave the old terms searchable forever. A silently stale index
-   * is the worst outcome available here, so correctness wins over cheapness.
+   * The old version hashed the content of every memory in every project and, on
+   * any mismatch, deleted and rebuilt the whole table. That made the cost of
+   * writing one note proportional to the size of the entire cross-project
+   * store: a note in project A invalidated the index for a recall in project B.
    *
-   * The cost is CPU only: these bodies were already read off disk to build the
-   * array being passed in.
+   * Now the unit is a file. Anything whose path, mtime and size are unchanged is
+   * left alone; anything new or modified is read and reindexed; anything the
+   * caller no longer lists is deleted. That last clause is also how the index
+   * garbage-collects itself -- delete a memory, or a whole project directory,
+   * and its rows go on the next sync with nothing to schedule.
+   *
+   * mtime is trusted because every write goes through a temp file and rename
+   * (store.ts § atomicWrite), and rename always moves the mtime forward. Size is
+   * carried too so that an edit landing inside the same millisecond is still
+   * seen. A per-directory mtime gate would cut the stat count from thousands to
+   * dozens, and is deliberately not done: it would miss a file an editor
+   * rewrote in place, and a silently stale index is the worst outcome available
+   * here.
+   *
+   * One transaction, because a crash mid-sync must leave the previous index
+   * intact rather than a half-built one that returns partial results. Rebuild by
+   * rename is not an option: MCP servers are per-session, so another process may
+   * hold this file open.
    */
-  private static fingerprint(memories: Memory[]): string {
-    const h = createHash("sha1");
-    for (const line of memories
-      .map((m) => `${m.id}\u0000${m.title}\u0000${m.body}\u0000${m.tags.join(",")}` +
-        `\u0000${m.files.join(",")}\u0000${m.supersededBy ?? ""}`)
-      .sort()) {
-      h.update(line);
+  sync(files: IndexFile[], load: (file: IndexFile) => Memory | null): void {
+    const known = new Map<string, Known>();
+    for (const r of this.db.prepare("SELECT rowid, path, mtime, size FROM memories").all()) {
+      known.set(String(r.path), {
+        rowid: Number(r.rowid),
+        mtime: Number(r.mtime),
+        size: Number(r.size),
+      });
     }
-    return h.digest("hex");
-  }
 
-  /**
-   * Bring the index in line with the markdown.
-   *
-   * Returns early when nothing has changed. That matters more than it looks:
-   * search calls this on every query, and rebuilding each time left over half
-   * the file as free pages -- 26 of 49 on the real store, which is how a 138KB
-   * corpus produced a 200KB index.
-   *
-   * When a rebuild is needed it deletes and reinserts inside one transaction.
-   * Rebuild-by-rename is not an option: MCP servers are per-session, so another
-   * process may hold this file open. A crash mid-transaction rolls back rather
-   * than leaving a half-built index that would silently return partial results.
-   */
-  sync(memories: Memory[]): void {
-    const fingerprint = MemoryIndex.fingerprint(memories);
-    const stored = this.db.prepare("SELECT value FROM meta WHERE key = 'fingerprint'").get();
-    if (stored && String(stored.value) === fingerprint) return;
+    const stale: IndexFile[] = [];
+    const seen = new Set<string>();
+    for (const f of files) {
+      // Two directories can resolve to the same file -- outside a repository
+      // claims and episodes share one -- so the same path may arrive twice.
+      if (seen.has(f.path)) continue;
+      seen.add(f.path);
+      const k = known.get(f.path);
+      if (!k || k.mtime !== f.mtimeMs || k.size !== f.size) stale.push(f);
+    }
+    const gone = [...known.entries()].filter(([path]) => !seen.has(path));
+
+    if (!stale.length && !gone.length) return;
+
+    let nextRowid = Number(
+      Object.values(this.db.prepare("SELECT MAX(rowid) AS max FROM memories").get() ?? {})[0] ?? 0,
+    ) + 1;
 
     this.db.exec("BEGIN");
     try {
-      this.db.exec("DELETE FROM fts");
-      this.db.exec("DELETE FROM memories");
-      const fts = this.db.prepare(
+      const dropFts = this.db.prepare("DELETE FROM fts WHERE rowid = ?");
+      const dropMeta = this.db.prepare("DELETE FROM memories WHERE rowid = ?");
+      const addFts = this.db.prepare(
         "INSERT INTO fts(rowid, title, body, tags, files) VALUES (?, ?, ?, ?, ?)",
       );
-      const meta = this.db.prepare(
-        `INSERT INTO memories(rowid, id, project, scope, kind, updated, superseded_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      const addMeta = this.db.prepare(
+        `INSERT INTO memories(rowid, id, path, mtime, size, project, kind, updated, superseded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
-      memories.forEach((m, i) => {
-        const rowid = i + 1;
-        fts.run(rowid, m.title, m.body, m.tags.join(" "), m.files.join(" "));
-        meta.run(rowid, m.id, m.fromProject ?? "", m.scope, m.kind, m.updated,
+
+      for (const [, k] of gone) {
+        dropFts.run(k.rowid);
+        dropMeta.run(k.rowid);
+      }
+
+      for (const f of stale) {
+        const existing = known.get(f.path);
+        if (existing) {
+          dropFts.run(existing.rowid);
+          dropMeta.run(existing.rowid);
+        }
+        const m = load(f);
+        if (!m) continue; // unreadable or not a memory; the row stays deleted
+        // Reuse the rowid of the file being replaced. Growing it forever would
+        // leave the fts b-tree sparse for no reason.
+        const rowid = existing ? existing.rowid : nextRowid++;
+        addFts.run(rowid, m.title, m.body, m.tags.join(" "), m.files.join(" "));
+        addMeta.run(rowid, m.id, f.path, f.mtimeMs, f.size, f.project, m.kind, m.updated,
           m.supersededBy ?? null);
-      });
-      this.db
-        .prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('fingerprint', ?)")
-        .run(fingerprint);
+      }
       this.db.exec("COMMIT");
     } catch (e) {
       this.db.exec("ROLLBACK");
       throw e;
     }
-    this.reclaim();
+    // Only worth the pages when something was actually removed.
+    if (gone.length) this.reclaim();
+  }
+
+  /**
+   * Locate memories by id without searching for them.
+   *
+   * The ranker resolves a hit forward onto the claim that superseded it, and
+   * that successor is usually not itself a hit -- so it has to be findable by
+   * id alone, or consolidation's whole point is lost at retrieval time.
+   */
+  locate(ids: string[]): { id: string; path: string; project: string }[] {
+    if (!ids.length) return [];
+    const holes = ids.map(() => "?").join(", ");
+    return this.db
+      .prepare(`SELECT id, path, project FROM memories WHERE id IN (${holes})`)
+      .all(...ids)
+      .map((r) => ({ id: String(r.id), path: String(r.path), project: String(r.project) }));
   }
 
   /**
@@ -240,7 +314,8 @@ export class MemoryIndex {
     // is negated into a positive relevance the ranker can multiply.
     const rows = this.db
       .prepare(
-        `SELECT m.id AS id, m.superseded_by AS superseded_by,
+        `SELECT m.id AS id, m.superseded_by AS superseded_by, m.path AS path,
+                m.project AS project,
                 -bm25(fts, 10.0, 1.0, 8.0, 4.0) AS relevance
            FROM fts JOIN memories m ON m.rowid = fts.rowid
           WHERE fts MATCH ?
@@ -252,6 +327,8 @@ export class MemoryIndex {
       id: String(r.id),
       relevance: Number(r.relevance),
       supersededBy: r.superseded_by === null ? null : String(r.superseded_by),
+      path: String(r.path),
+      project: String(r.project),
     }));
   }
 

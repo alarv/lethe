@@ -66,7 +66,7 @@ function loadTasks(): Task[] {
  * test is exactly the one that ships.
  *
  * The workspace is a throwaway directory rather than this repository. Running
- * against the repo let team-scoped claims escape the sandbox into .lethe/memory,
+ * against the repo let claims escape the sandbox into .lethe/memory,
  * where they persisted across conditions and across runs.
  */
 async function buildStore(condition: Condition, home: string, workspace: string) {

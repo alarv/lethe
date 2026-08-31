@@ -1,6 +1,7 @@
 /**
- * Configuration, and the two questions `lethe doctor` has to answer about it:
- * which config file won, and whether git agrees with the scope it set.
+ * Configuration, and the questions `lethe doctor` has to answer about it: what
+ * git actually does with the claims in a repository, and whether any config file
+ * still sets the `scope` setting that no longer exists.
  */
 
 import { execFileSync } from "node:child_process";
@@ -9,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SCOPE_NAMES, claimSharing, configSources, ignoreInGit, isScope, staleRootIgnore } from "./config.js";
+import { claimSharing, ignoreInGit, shareDefault, staleConfig, staleRootIgnore } from "./config.js";
 
 /** A real repository, because claimSharing asks git rather than parsing .gitignore. */
 function withRepo(fn: (root: string) => void): void {
@@ -61,7 +62,9 @@ test("it is a whitelist, so a future artifact cannot be committed by accident", 
     const lines = readFileSync(join(root, ".lethe", ".gitignore"), "utf8").split("\n");
     assert.ok(lines.includes("*"), "must start from ignoring everything");
     assert.ok(lines.includes("!.gitignore"));
-    assert.ok(lines.includes("!config.json"));
+    // No !config.json: there is no project config file any more. The one
+    // setting left is global, and .lethe/.gitignore is the project's answer.
+    assert.equal(lines.includes("!config.json"), false);
   });
 });
 
@@ -157,12 +160,14 @@ test("claims written but not ignored are untracked, and countable", () => {
   });
 });
 
-test("team scope plus a .gitignore line is the trap doctor has to catch", () => {
+test("claims in the repo that git ignores read as ignored, which is now an answer", () => {
   withRepo((root) => {
     writeFileSync(join(root, ".gitignore"), ".lethe/memory/\n");
     writeClaim(root, "a-one.md");
     const s = claimSharing(root);
-    // The files exist, in the repo, and nobody but this machine will see them.
+    // This used to be doctor's one FAIL: `team` scope claimed sharing that a
+    // .gitignore line revoked. Claims live in the repo either way now, so
+    // ignored means private -- exactly what `lethe init --private` asks for.
     assert.equal(s.state, "ignored");
     assert.equal(s.files, 1);
   });
@@ -198,83 +203,107 @@ test("a directory git cannot answer for is unknown rather than wrong", () => {
   }
 });
 
-// ----------------------------------------------------------- configSources
+// ----------------------------------------------------------- staleConfig
 
-test("configSources reports both files, project last so the winner is last", () => {
+/** Both config paths, with LETHE_HOME pointed somewhere disposable. */
+function withHome(fn: (home: string) => void): void {
   const home = mkdtempSync(join(tmpdir(), "lethe-test-home-"));
   const previous = process.env.LETHE_HOME;
   process.env.LETHE_HOME = home;
   try {
+    fn(home);
+  } finally {
+    if (previous === undefined) delete process.env.LETHE_HOME;
+    else process.env.LETHE_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test("staleConfig names every file still setting the removed `scope`", () => {
+  withHome((home) => {
     withRepo((root) => {
       writeFileSync(join(home, "config.json"), JSON.stringify({ scope: "personal" }));
       mkdirSync(join(root, ".lethe"), { recursive: true });
       writeFileSync(join(root, ".lethe", "config.json"), JSON.stringify({ scope: "team" }));
 
-      const sources = configSources(root);
-      assert.equal(sources.length, 2);
-      assert.equal(sources[0]!.path, join(home, "config.json"));
-      assert.equal(sources[0]!.scope, "personal");
-      assert.equal(sources[1]!.path, join(root, ".lethe", "config.json"));
-      assert.equal(sources[1]!.scope, "team");
-      assert.ok(sources.every((s) => s.exists));
+      // Silence here would reproduce the failure the setting used to cause:
+      // believing memory is somewhere it is not.
+      assert.deepEqual(staleConfig(root), [
+        join(home, "config.json"),
+        join(root, ".lethe", "config.json"),
+      ]);
     });
-  } finally {
-    if (previous === undefined) delete process.env.LETHE_HOME;
-    else process.env.LETHE_HOME = previous;
-    rmSync(home, { recursive: true, force: true });
-  }
+  });
 });
 
-test("a config file that does not exist is reported, not hidden", () => {
-  const home = mkdtempSync(join(tmpdir(), "lethe-test-home-"));
-  const previous = process.env.LETHE_HOME;
-  process.env.LETHE_HOME = home;
-  try {
+test("staleConfig says nothing about files that do not set it", () => {
+  withHome((home) => {
     withRepo((root) => {
-      // Neither file written. Doctor still needs to be able to say where it
-      // looked, otherwise "I set the scope" and "nothing took" cannot be told
-      // apart from "you set it somewhere I do not read".
-      const sources = configSources(root);
-      assert.equal(sources.length, 2);
-      assert.ok(sources.every((s) => !s.exists));
-      assert.ok(sources.every((s) => s.scope === undefined));
+      writeFileSync(join(home, "config.json"), JSON.stringify({ share: true }));
+      assert.deepEqual(staleConfig(root), []);
     });
-  } finally {
-    if (previous === undefined) delete process.env.LETHE_HOME;
-    else process.env.LETHE_HOME = previous;
-    rmSync(home, { recursive: true, force: true });
-  }
+  });
 });
 
-// -------------------------------------------------------------- isScope
-
-test("isScope accepts the three scopes and nothing else", () => {
-  for (const s of SCOPE_NAMES) assert.ok(isScope(s), `${s} must be a scope`);
-  assert.equal(SCOPE_NAMES.length, 3);
-  // `lethe init --scope=banana` used to write this to config.json, report
-  // success, and then quietly resolve to local.
-  for (const bad of ["banana", "Team", "team ", "", "team --private", undefined, null, 3]) {
-    assert.equal(isScope(bad), false, `${String(bad)} must not be a scope`);
-  }
-});
-
-test("an unreadable scope in a config file falls back rather than throwing", () => {
-  const home = mkdtempSync(join(tmpdir(), "lethe-test-home-"));
-  const previous = process.env.LETHE_HOME;
-  process.env.LETHE_HOME = home;
-  try {
+test("staleConfig ignores a file it cannot parse rather than throwing", () => {
+  withHome((home) => {
     withRepo((root) => {
-      mkdirSync(join(root, ".lethe"), { recursive: true });
-      writeFileSync(join(root, ".lethe", "config.json"), JSON.stringify({ scope: "banana" }));
-      // configSources reports it verbatim so doctor can point at the file;
-      // deciding it is junk is the caller's job.
-      const sources = configSources(root);
-      assert.equal(sources[1]!.scope, "banana");
-      assert.equal(isScope(sources[1]!.scope), false);
+      writeFileSync(join(home, "config.json"), "{ not json");
+      assert.deepEqual(staleConfig(root), []);
     });
-  } finally {
-    if (previous === undefined) delete process.env.LETHE_HOME;
-    else process.env.LETHE_HOME = previous;
-    rmSync(home, { recursive: true, force: true });
-  }
+  });
+});
+
+// ---------------------------------------------------------- shareDefault
+
+test("sharing is off unless it was asked for", () => {
+  withHome(() => {
+    // Writing memories into a repository is one thing; publishing them to
+    // everyone who clones it is another, and must never follow from silence.
+    assert.equal(shareDefault(), false);
+  });
+});
+
+test("shareDefault reads only the global file, and only `share`", () => {
+  withHome((home) => {
+    writeFileSync(join(home, "config.json"), JSON.stringify({ share: true }));
+    assert.equal(shareDefault(), true);
+
+    writeFileSync(join(home, "config.json"), JSON.stringify({ share: false }));
+    assert.equal(shareDefault(), false);
+
+    // Anything that is not exactly true is not sharing.
+    writeFileSync(join(home, "config.json"), JSON.stringify({ share: "yes" }));
+    assert.equal(shareDefault(), false);
+  });
+});
+
+// -------------------------------------------- private means git sees nothing
+
+test("private claims leave git status completely clean", () => {
+  withRepo((root) => {
+    ignoreInGit(root, false);
+    writeClaim(root, "a-one.md");
+    const status = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
+    // `?? .lethe/` used to show up here, because .lethe/.gitignore was itself
+    // un-ignored. Choosing "in the repo, git-ignored" and then finding the repo
+    // dirty is the outcome the whole layout exists to prevent.
+    assert.equal(status.trim(), "");
+  });
+});
+
+test("sharing brings the ignore file back so the rules travel with the repo", () => {
+  withRepo((root) => {
+    ignoreInGit(root, false);
+    assert.equal(ignoreInGit(root, true), "updated");
+    const lines = readFileSync(join(root, ".lethe", ".gitignore"), "utf8").split("\n");
+    assert.ok(lines.includes("!.gitignore"), "a clone needs the rules to arrive with it");
+    assert.ok(lines.includes("!memory/"));
+
+    // And back again, in place.
+    assert.equal(ignoreInGit(root, false), "updated");
+    const off = readFileSync(join(root, ".lethe", ".gitignore"), "utf8").split("\n");
+    assert.ok(off.includes("# !.gitignore"));
+    assert.ok(off.includes("# !memory/"));
+  });
 });

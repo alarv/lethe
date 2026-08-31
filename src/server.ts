@@ -11,23 +11,10 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Store, author, memoryDir, type Memory, type Scope } from "./store.js";
-import { defaultScope } from "./config.js";
+import { Store, author, claimDir, episodeDir, type Memory } from "./store.js";
 import { compact, type Distiller } from "./compact.js";
 import { buildStamp, log } from "./log.js";
 import { logResolved, resolveDistiller } from "./distil.js";
-
-/**
- * Left optional rather than defaulted, so the configured scope applies. A zod
- * default is fixed when the tool is registered, which would override config.
- */
-const scopeSchema = z.enum(["local", "team", "personal"]).optional()
-  .describe(
-    "omit to use the configured default | " +
-    "where consolidated claims from this memory should eventually live. " +
-    "Episodes are always private to you regardless. " +
-    "team = shared via the repo (default) | local = this machine | personal = you, everywhere",
-  );
 
 function render(m: Memory): string {
   const from = m.fromProject ? ` — from ${m.fromProject}` : "";
@@ -74,7 +61,7 @@ const MAX_RAW_AGE_MS = num(process.env.LETHE_MAX_RAW_HOURS, 24) * 60 * 60 * 1000
 export function createServer(cwd = process.cwd()): McpServer {
   let store = new Store(cwd);
   let root = cwd;
-  /** The directory config and scope resolve against. */
+  /** The directory the store resolves paths against. */
   const workspace = () => root;
   const server = new McpServer({ name: "lethe", version: "0.0.1" });
 
@@ -102,7 +89,7 @@ export function createServer(cwd = process.cwd()): McpServer {
       if (dir === cwd) return;
       store = new Store(dir);
       root = dir;
-      log("start", "bound to workspace root", { root: dir, store: memoryDir("local", dir) });
+      log("start", "bound to workspace root", { root: dir, store: episodeDir(dir) });
     } catch {
       // Client does not implement roots; the cwd-based store stands.
     }
@@ -151,10 +138,7 @@ export function createServer(cwd = process.cwd()): McpServer {
           episodes: episodes.length,
           pressure: pressure.toFixed(2),
         });
-        const r = await compact(store, {
-          distil: resolved.distil,
-          claimScope: defaultScope(workspace()),
-        });
+        const r = await compact(store, { distil: resolved.distil });
         log("compact", "done", {
           via: resolved.via,
           claims: r.claimsWritten,
@@ -212,7 +196,6 @@ export function createServer(cwd = process.cwd()): McpServer {
     {
       title: z.string().describe("one line, specific"),
       body: z.string().default("").describe("what happened, and why it matters next time"),
-      scope: scopeSchema,
       tags: z.array(z.string()).default([]),
       files: z.array(z.string()).default([]).describe("relevant paths"),
       salience: z.number().min(0).max(1).default(0.5)
@@ -220,8 +203,8 @@ export function createServer(cwd = process.cwd()): McpServer {
     },
     async (args) => {
       await ensureBound();
-      const m = store.create({ ...args, scope: args.scope ?? defaultScope(workspace()) });
-      log("note", m.title, { id: m.id.slice(0, 8), scope: m.scope });
+      const m = store.create(args);
+      log("note", m.title, { id: m.id.slice(0, 8), kind: m.kind });
       relievePressure();
       return { content: [{ type: "text", text: `recorded [${m.id.slice(0, 8)}] ${m.title}` }] };
     },
@@ -268,7 +251,6 @@ export function createServer(cwd = process.cwd()): McpServer {
         title,
         body,
         kind: old.kind,
-        scope: old.scope,
         tags: old.tags,
         files: old.files,
         salience: Math.max(old.salience, 0.7), // a correction is itself high signal
@@ -319,7 +301,7 @@ export async function serve(): Promise<void> {
   await server.connect(new StdioServerTransport());
   log("start", "mcp server connected", {
     cwd: process.cwd(),
-    store: memoryDir("local"),
+    store: claimDir(),
     build: buildStamp(),
   });
 }

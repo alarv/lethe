@@ -11,8 +11,53 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+### Added
+
+- **`lethe gc`** — what is in `~/.lethe`, how big each part is, and what is dead in it.
+  `--dry-run` says what would go, `--dead` also removes directories whose project is gone,
+  `--reindex` throws the index away (it rebuilds on the next recall, and is the escape
+  hatch if a filesystem with coarse timestamps ever hides an edit from the mtime check).
+- **`lethe init --debug` / `--no-debug`** to turn the log on and off, and a `home` row in
+  `lethe doctor` reporting the directory's size, its live project count, and anything
+  keyed to a path that has disappeared.
+- **`lethe init` asks one question**: should this project's consolidated claims be
+  committed, or git-ignored? Two options instead of four across three scope words, and
+  both write to the same directory. `--share` and `--private` skip the question;
+  `--global --share` sets the answer new projects start from, and is the only setting
+  left (`~/.lethe/config.json`, `{ "share": bool }`, read by `init` alone).
+- **`lethe doctor` prints both derived paths** — claims and episodes — instead of a scope
+  and a list of config files that could contradict each other.
+
 ### Changed
 
+- **Scopes are gone. Where a memory goes is derived from what it is.** Claims and
+  patterns are written to `<repo>/.lethe/memory/`, beside the code they describe;
+  episodes to `~/.lethe/projects/<key>/`, never into a repository. Outside a git repo,
+  claims fall back to the episode directory. Nothing to pass, nothing to configure.
+
+  There were three scopes, and one word was being asked to answer two questions at once
+  — *where do the bytes live* and *who can read them*. `local` and `personal` differed
+  only in reach, which neither word said; the author could not reliably predict where his
+  own tool would write. Worse, `team` asserted sharing that a `.gitignore` line could
+  silently revoke, so the store could sit in a repo looking shared and be committed
+  nowhere — which is what this repository was doing to its own nine claims.
+
+  Renaming the three would have kept the defect. The two questions are now answered in
+  two places that cannot disagree: the kind decides the path, and `.lethe/.gitignore`
+  decides who reads it.
+
+  Nothing needs migrating. Scope was never stored in a memory's frontmatter — it was
+  always inferred from the directory — so existing files are read exactly as before, and
+  claims already sitting in `~/.lethe` stay findable.
+- **Claims live in the repository whether or not they are committed**, so changing your
+  mind about sharing moves no files: it flips two lines in `.lethe/.gitignore`. The
+  previous design put private claims in `~/.lethe` instead, which meant switching cost a
+  file-by-file relocation and a chance to lose them.
+- **`lethe doctor` no longer fails on git-ignored claims.** That state used to be a
+  contradiction (`team` scope with the claims ignored); it is now simply what
+  `lethe init --private` asks for. The one state left worth flagging is claims that are
+  neither ignored nor committed — sharing is on and nobody ran `git add` — reported as a
+  warning.
 - **The ignore rules live in `<repo>/.lethe/.gitignore`, not your repository root.** A
   subdirectory `.gitignore` governs its own directory and wins over shallower patterns,
   so lethe no longer appends to — or has to parse — a file you own, and the entire
@@ -27,40 +72,83 @@ The release workflow refuses to publish a version with no section here.
   root by an older version is overridden by the nested file, so nothing breaks on
   upgrade; `lethe init` points at it so you can delete it.
 - **`lethe init` and `lethe where` always say where episodes live**, not just claims.
-  Listing three scopes implied a memory could be in any of them; only claims move.
-- **`lethe init --global` run inside a repo that overrides the global default now says
-  so**, and prints the paths that directory will actually use rather than the ones the
-  global setting implies.
+  Listing candidate locations implied a memory could be in any of them, which was never
+  true: the kind decides.
+- **The derived SQLite index changed shape** (schema 2 → 4): the `scope` column is gone,
+  and each row now carries the path, mtime and size of the file behind it. Existing
+  `index.db` files rebuild themselves on next use, as they do for any schema change — the
+  markdown is the source of truth and the index holds nothing that is not in it.
+- **Recall no longer reads the whole store.** It used to parse every memory in every
+  project on every query, to hand the index a corpus to fingerprint — so the cost of a
+  recall, and of a `note` (which invalidated that fingerprint and forced a full rebuild),
+  scaled with everything you had ever written. Measured across 36 projects holding 36,000
+  memories: **4.4 seconds per recall, 4.8 for a note followed by one.**
+
+  The unit of change is now a file. Enumeration stats instead of reading; anything whose
+  path, mtime and size are unchanged is skipped; only new or modified files are parsed and
+  reindexed; anything no longer listed is deleted, which is also how the index prunes
+  itself. Then only the hits are read off disk, plus the successors of any that were
+  superseded — bounded by the number of results, not by the size of the store.
+
+  Same corpus, same query: **373 ms warm, 574 ms after a note.** At 9,000 memories,
+  53 ms. First build after upgrading is slower than the old rebuild (7.8 s at 36,000,
+  two new indexes) but happens once per index file rather than once per note.
+
+  mtime is trusted because every write goes through a temp file and a rename, which always
+  moves it forward, and size is carried too so an edit inside the same millisecond is still
+  seen. Ranking is untouched: the pool handed to bm25 and every multiplier the ranker
+  applies are the same, so this is a pure cost change and an eval can still attribute
+  anything else.
+- **The log is off unless you ask for it.** `lethe init --debug` turns it on for this
+  machine, `LETHE_DEBUG=1` for a single run. Appending forever to a file in someone's home
+  directory is not a diagnostic — nothing rotated it, nothing capped it, and nobody asked
+  for it. When it is on it now rotates at 512 KB and keeps one previous copy; `lethe log`
+  and `lethe metrics` read across the rotation so a rename does not look like history
+  being thrown away.
+
+  Everything derived from the log — `lethe metrics`, and the activity rows in `status` and
+  `doctor` — reports that logging is off rather than reporting zero notes and zero
+  recalls. "Nothing happened" and "nothing was written down" are different answers, and
+  only one of them is a problem worth sending someone to investigate.
+- **`~/.lethe` is collected as compaction passes.** Project directories left behind by
+  repositories that no longer exist were never removed: eighteen on the author's machine,
+  ten of them `/private/var/folders/.../tmp-xxxx` leftovers from test runs. Directories
+  holding **no** memories are now swept during `compact()`, which is already triggered by
+  use, already off the latency path, and already the pass that decides what does not
+  deserve to survive.
+
+  Directories that still hold memories are never removed automatically, however dead their
+  path looks. A source path missing today is as likely to be an unmounted volume, a moved
+  checkout or another machine as a deleted repository, and losing memories to a filesystem
+  inference is a far worse failure than keeping a stale folder. `lethe doctor` and
+  `lethe gc` name them and stop.
+
+### Removed
+
+- **`--scope`, `LETHE_SCOPE`, and `<repo>/.lethe/config.json`.** A project's sharing
+  decision is recorded in its `.lethe/.gitignore`, the file git actually reads, so a
+  setting that duplicated it could only ever disagree with it. `lethe doctor` names any
+  config file still setting `scope` rather than ignoring it in silence — that silence is
+  the failure the setting itself used to cause.
+- **The `scope` parameter on the `note` MCP tool.** Agents had to understand three words
+  to write one memory, and got it wrong. Nothing chooses now.
+- **Cross-project (`personal`) scope.** It was largely redundant with a retrieval feature
+  that already shipped: recall tops up from neighbouring project stores at a discount, so
+  something learned in one repo already surfaces in another. Claims already in
+  `~/.lethe/memory/` are still read so they are not orphaned, and `lethe where` shows the
+  directory while it has anything in it.
 
 ### Fixed
 
-- **`lethe init --scope=<nonsense>` is now refused.** It used to write the value to
-  `config.json`, print "default scope banana", and then silently resolve to `local` — the
-  setting appeared to take and did not, which is the exact failure the config rows in
-  `lethe doctor` were added to answer. Doctor now also marks a config file whose scope is
-  not a scope, instead of pointing at it as the winner.
-
 - **`lethe init` no longer writes a `.gitignore` line for `.lethe/episodes/`.** That
-  directory has never existed — episodes live in `~/.lethe/projects/<key>/` whatever the
-  scope says — so the line protected nothing while telling the reader, under the heading
-  "private working memory, never shared", that their raw session notes were sitting in
-  the repository waiting to be committed.
-
-### Added
-
-- **`lethe init` asks where claims should go**, in terms of who ends up able to read them
-  rather than in terms of a scope name: in this repo committed, in this repo git-ignored,
-  outside the repo, or with you across every project. It then asks whether that is a
-  setting for this project or your default everywhere. `--scope` and `--private` still
-  work and skip the questions, so scripts and CI are unaffected.
-- **`lethe doctor` reports which config file won.** A global `~/.lethe/config.json` and a
-  project `.lethe/config.json` can disagree, and until now nothing could answer "I set
-  team scope and it did not take".
-- **`lethe doctor` fails when scope and git disagree.** `team` scope decides where claims
-  are *written*; `.gitignore` decides who can *read* them. A repo configured for team
-  scope with `.lethe/memory/` ignored looks shared and is committed nowhere — which is
-  what this repository was doing to its own nine claims. Claims written but never
-  committed are reported as a warning rather than a failure.
+  directory has never existed — episodes live in `~/.lethe/projects/<key>/` — so the line
+  protected nothing while telling the reader, under the heading "private working memory,
+  never shared", that their raw session notes were sitting in the repository waiting to
+  be committed.
+- **`store.all()` no longer returns every memory twice outside a git repository**, where
+  claims and episodes share one directory. The paths are deduplicated before reading,
+  which would otherwise have doubled every count in `lethe status` and the pressure
+  calculation that triggers compaction.
 
 ## [0.0.2] — 2026-08-27
 

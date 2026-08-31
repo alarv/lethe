@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { MemoryIndex } from "./index-db.js";
+import { MemoryIndex, type IndexFile } from "./index-db.js";
 import { rank } from "./rank.js";
 import { log } from "./log.js";
 import {
@@ -24,20 +24,25 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 
 /**
- * Where a memory lives.
+ * Where a memory lives, which is derived rather than chosen.
  *
- *   local     ~/.lethe/projects/<repo>/  — this repo, private to you. The default.
- *   team      <repo>/.lethe/memory/      — committed, shared, reviewed in PRs.
- *   personal  ~/.lethe/memory/           — you, across every repo.
+ *   claims, patterns  <repo>/.lethe/memory/     — beside the code they describe
+ *   episodes          ~/.lethe/projects/<key>/  — your scratchpad, never in a repo
  *
- * `local` is the default because writing into someone's repo is a decision they
- * should opt into, not discover in `git status`.
+ * There is no scope to pass and nothing to configure: what a memory *is* decides
+ * where it goes. Whether anyone else can read the claims is a separate question,
+ * answered by `.lethe/.gitignore` -- see config.ts § ignoreInGit.
+ *
+ * One word used to answer both questions at once, and could not. `local` and
+ * `personal` differed only in reach, which neither word said; `team` claimed
+ * sharing that a .gitignore line could silently revoke. Deriving the path
+ * deleted the question instead of renaming it.
  */
-export type Scope = "local" | "team" | "personal";
 
 /** Episodic = what happened. Semantic = what is true. Procedural = how we do things. */
 export type Kind = "episode" | "claim" | "pattern";
@@ -45,7 +50,6 @@ export type Kind = "episode" | "claim" | "pattern";
 export interface Memory {
   id: string;
   kind: Kind;
-  scope: Scope;
   title: string;
   body: string;
   tags: string[];
@@ -198,23 +202,49 @@ export function readSource(dir: string): string | null {
   }
 }
 
-export function memoryDir(scope: Scope, cwd = process.cwd()): string {
+/**
+ * Your scratchpad, and the fallback for everything when there is no repository.
+ *
+ * Keyed to the project rather than pooled across all of them, because episodes
+ * are numerous and specific to the code that produced them. Nothing is lost by
+ * not having a cross-project store: `otherProjects()` already reaches next door
+ * when this one has little to say.
+ */
+export function episodeDir(cwd = process.cwd()): string {
   const home = letheHome();
-  if (scope === "personal") return join(home, "memory");
-
-  const root = findProjectRoot(cwd);
-  if (scope === "team") {
-    if (!root) throw new Error("team scope needs a git repository");
-    return join(root, ".lethe", "memory");
-  }
-  // Local scope falls back to the working directory when there is no repo.
-  // Throwing here made list() return empty and recall silently answer nothing --
-  // the agent asked four times, got zero hits, and had no way to see why.
-  const base = root ?? cwd;
+  // Falls back to the working directory when there is no repo. Throwing here
+  // made list() return empty and recall silently answer nothing -- the agent
+  // asked four times, got zero hits, and had no way to see why.
+  const base = findProjectRoot(cwd) ?? cwd;
   migrate(home, base);
   const dir = join(home, "projects", projectKey(base));
   recordSource(dir, base);
   return join(dir, "memory");
+}
+
+/**
+ * Where consolidated claims go: beside the code they describe.
+ *
+ * In the repository whenever there is one, committed or not. That is what makes
+ * the sharing decision free to change -- flipping it is two characters in
+ * `.lethe/.gitignore` and not one file moves. The previous design put private
+ * claims in ~/.lethe instead, so changing your mind meant relocating every file
+ * and hoping none was lost on the way.
+ */
+export function claimDir(cwd = process.cwd()): string {
+  const root = findProjectRoot(cwd);
+  return root ? join(root, ".lethe", "memory") : episodeDir(cwd);
+}
+
+/**
+ * `~/.lethe/memory/`, which nothing writes to any more.
+ *
+ * Still read, so claims written under the old cross-project scope stay findable
+ * rather than being silently orphaned. `lethe doctor` points at it when it has
+ * anything in it.
+ */
+export function legacyClaimDir(): string {
+  return join(letheHome(), "memory");
 }
 
 // ---------------------------------------------------------- serialisation
@@ -254,7 +284,7 @@ export function serialize(m: Memory): string {
   return `---\n${fm}\n---\n\n${m.body}\n`;
 }
 
-export function parse(text: string, scope: Scope): Memory | null {
+export function parse(text: string): Memory | null {
   const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);
   if (!match) return null;
   const [, fmBlock, body] = match;
@@ -271,7 +301,6 @@ export function parse(text: string, scope: Scope): Memory | null {
   return {
     id: f.id,
     kind: (f.kind as Kind) ?? "episode",
-    scope,
     title: unesc(f.title ?? ""),
     body: (body ?? "").trim(),
     tags: list(f.tags),
@@ -439,26 +468,23 @@ export class Store {
   /**
    * Move episodes out of the repository.
    *
-   * Earlier versions let any memory be written to team scope, so repositories
+   * Earlier versions let any memory be written into the repository, so repos
    * picked up private scratchpad entries that would otherwise reach a commit.
    * Runs once per store: cheap when there is nothing to move.
    */
   private relocateEpisodes(): void {
-    let from: string;
-    try {
-      from = memoryDir("team", this.cwd);
-    } catch {
-      return; // not in a repository; nothing to relocate
-    }
+    const root = findProjectRoot(this.cwd);
+    if (!root) return; // no repository; nothing to relocate
+    const from = join(root, ".lethe", "memory");
     if (!existsSync(from)) return;
     let moved = 0;
     try {
       for (const name of readdirSync(from)) {
         if (!name.endsWith(".md")) continue;
         const path = join(from, name);
-        const m = parse(readFileSync(path, "utf8"), "team");
+        const m = parse(readFileSync(path, "utf8"));
         if (!m || m.kind !== "episode") continue;
-        const to = join(memoryDir("local", this.cwd), name);
+        const to = join(episodeDir(this.cwd), name);
         mkdirSync(dirname(to), { recursive: true });
         if (!existsSync(to)) renameSync(path, to);
         else rmSync(path, { force: true });
@@ -470,12 +496,6 @@ export class Store {
     }
   }
 
-  private dir(scope: Scope): string {
-    const d = memoryDir(scope, this.cwd);
-    mkdirSync(d, { recursive: true });
-    return d;
-  }
-
   /**
    * Where a memory belongs, decided by what it is rather than by what a caller
    * asked for.
@@ -485,25 +505,27 @@ export class Store {
    * hundred people's scratchpads is noise, not knowledge. Claims and patterns
    * are what survived, and are the only things worth anyone else reading.
    */
-  private scopeFor(m: Memory): Scope {
-    return m.kind === "episode" ? "local" : m.scope;
+  private dirFor(m: Memory): string {
+    return m.kind === "episode" ? episodeDir(this.cwd) : claimDir(this.cwd);
   }
 
   private pathFor(m: Memory): string {
-    return join(this.dir(this.scopeFor(m)), `${m.id.slice(0, 8)}-${slug(m.title)}.md`);
+    const dir = this.dirFor(m);
+    mkdirSync(dir, { recursive: true });
+    return join(dir, `${m.id.slice(0, 8)}-${slug(m.title)}.md`);
   }
 
-  list(scope: Scope): Memory[] {
-    let dir: string;
-    try {
-      dir = this.dir(scope);
-    } catch {
-      return []; // outside a repo: not an error, just empty
-    }
+  private read(dir: string): Memory[] {
     const out: Memory[] = [];
-    for (const name of readdirSync(dir)) {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return out; // nothing has been written there; not an error
+    }
+    for (const name of names) {
       if (!name.endsWith(".md")) continue;
-      const m = parse(readFileSync(join(dir, name), "utf8"), scope);
+      const m = parse(readFileSync(join(dir, name), "utf8"));
       if (!m) continue;
       const d = this.dyn.get(m.id, m.created);
       Object.assign(m, d);
@@ -513,8 +535,14 @@ export class Store {
     return out;
   }
 
+  /**
+   * Everything readable from here, uniqued by directory.
+   *
+   * Outside a repository claims and episodes share one directory, so the paths
+   * have to be deduplicated or every memory comes back twice.
+   */
   all(): Memory[] {
-    return [...this.list("local"), ...this.list("team"), ...this.list("personal")];
+    return this.myDirs().flatMap((d) => this.read(d));
   }
 
   /**
@@ -551,7 +579,6 @@ export class Store {
     title: string;
     body: string;
     kind?: Kind;
-    scope?: Scope;
     tags?: string[];
     files?: string[];
     salience?: number;
@@ -561,7 +588,6 @@ export class Store {
     return this.write({
       id: randomUUID(),
       kind: input.kind ?? "episode",
-      scope: input.scope ?? "local",
       title: input.title,
       body: input.body,
       tags: input.tags ?? [],
@@ -588,7 +614,7 @@ export class Store {
     m.accessCount += 1;
     m.strength = Math.min(2, m.strength + amount);
     m.lastAccessed = new Date().toISOString();
-    // Reinforcement is local, so this must not rewrite the shared file.
+    // Reinforcement is per-machine, so this must not rewrite the shared file.
     this.saveDynamics(m);
     return m;
   }
@@ -648,7 +674,7 @@ export class Store {
       for (const name of readdirSync(mem)) {
         if (!name.endsWith(".md")) continue;
         try {
-          const m = parse(readFileSync(join(mem, name), "utf8"), "local");
+          const m = parse(readFileSync(join(mem, name), "utf8"));
           if (!m) continue;
           m.fromProject = source ?? key;
           out.push(m);
@@ -658,6 +684,85 @@ export class Store {
       }
     }
     return out;
+  }
+
+  /**
+   * Every candidate file, described without being read.
+   *
+   * This is the enumeration the index diffs against. It stats rather than
+   * parses, because the point is to discover what changed without paying for
+   * what did not: reading the whole cross-project corpus was costing 4.4 seconds
+   * per recall on a 36,000-memory store, and stat-ing it costs 120ms.
+   */
+  private indexFiles(): IndexFile[] {
+    const out: IndexFile[] = [];
+    const add = (dir: string, project: string) => {
+      let names: string[];
+      try {
+        names = readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const name of names) {
+        if (!name.endsWith(".md")) continue;
+        const path = join(dir, name);
+        try {
+          const st = statSync(path);
+          out.push({ path, mtimeMs: st.mtimeMs, size: st.size, project });
+        } catch {
+          /* vanished between readdir and stat; it is simply not there */
+        }
+      }
+    };
+
+    // "" marks this project. Anything else is a borrowed memory, which the
+    // ranker discounts -- so the distinction has to survive into the index.
+    for (const dir of this.myDirs()) add(dir, "");
+    const projects = join(letheHome(), "projects");
+    const mine = findProjectRoot(this.cwd) ?? this.cwd;
+    let keys: string[];
+    try {
+      keys = readdirSync(projects);
+    } catch {
+      return out;
+    }
+    for (const key of keys) {
+      const source = readSource(join(projects, key));
+      if (source === mine) continue;
+      add(join(projects, key, "memory"), source ?? key);
+    }
+    return out;
+  }
+
+  /** The directories this project reads as its own. */
+  private myDirs(): string[] {
+    return [...new Set([episodeDir(this.cwd), claimDir(this.cwd), legacyClaimDir()])];
+  }
+
+  /**
+   * Read one memory off disk, with the trimmings the caller's project needs.
+   *
+   * Dynamics are merged only for our own memories, because dynamics.json is
+   * per-project: another project's strengths are not ours to apply, and reading
+   * eighteen sidecars to rank eight results would give back the cost this whole
+   * change removed.
+   */
+  private load(path: string, project: string): Memory | null {
+    let m: Memory | null;
+    try {
+      m = parse(readFileSync(path, "utf8"));
+    } catch {
+      return null;
+    }
+    if (!m) return null;
+    if (project) {
+      m.fromProject = project;
+      return m;
+    }
+    const d = this.dyn.get(m.id, m.created);
+    Object.assign(m, d);
+    m.confirmedBy = d.confirmedBy ?? [];
+    return m;
   }
 
   private score(m: Memory, tokens: string[], paths: string[]): number {
@@ -707,7 +812,7 @@ export class Store {
     const here = rank(this.all()).slice(0, limit);
     if (here.length >= limit) return here.map((r) => r.m);
 
-    // Top up from neighbouring projects, discounted so anything local wins.
+    // Top up from neighbouring projects, discounted so anything here wins.
     const elsewhere = rank(this.otherProjects())
       .map((r) => ({ ...r, score: r.score * 0.5 }))
       .slice(0, limit - here.length);
@@ -731,12 +836,29 @@ export class Store {
     const index = MemoryIndex.open(join(letheHome(), "index.db"));
     if (!index) return this.searchNaive(query, limit, paths);
     try {
-      const pool = [...this.all(), ...this.otherProjects()];
-      index.sync(pool);
-      const byId = new Map(pool.map((m) => [m.id, m]));
+      index.sync(this.indexFiles(), (f) => this.load(f.path, f.project));
       // Over-fetch: hits that resolve forward collapse onto shared claims, so
       // asking for exactly `limit` rows can yield fewer than `limit` results.
-      return rank(index.search(query, limit * 4), byId, paths, limit);
+      const hits = index.search(query, limit * 4);
+      if (!hits.length) return [];
+
+      // Load the hits, and then the successors of any that were superseded --
+      // a successor is rarely a hit itself, and dropping it would throw away
+      // the consolidation the user already paid for. Both sets are bounded by
+      // the number of hits, which is why recall no longer scales with the store.
+      const byId = new Map<string, Memory>();
+      for (const h of hits) {
+        const m = this.load(h.path, h.project);
+        if (m) byId.set(m.id, m);
+      }
+      const wanted = [...new Set(
+        hits.map((h) => h.supersededBy).filter((id): id is string => !!id && !byId.has(id)),
+      )];
+      for (const row of index.locate(wanted)) {
+        const m = this.load(row.path, row.project);
+        if (m) byId.set(m.id, m);
+      }
+      return rank(hits, byId, paths, limit);
     } catch (e) {
       log("index", `search failed, falling back to the scorer: ${(e as Error).message}`);
       return this.searchNaive(query, limit, paths);

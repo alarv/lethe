@@ -47,9 +47,17 @@ shipping something that looks finished and does nothing.
 
 ## Storage
 
-`local` scope is the default and lives in `~/.lethe/projects/<repo>-<hash>/`. Writing
-into someone's repository is a decision they opt into (`team` scope), never something
-they discover in `git status`.
+`~/.lethe` is collected as it goes: the index prunes rows for files that vanished, the
+log rotates at 512 KB (and is off unless `lethe init --debug`), and project directories
+holding no memories are swept during `compact()`. Directories that still hold memories
+are never removed automatically, however dead their path looks — see `src/maintain.ts`
+for why. `lethe gc` reports the whole picture.
+
+Placement is derived, not configured: claims and patterns go to
+`<repo>/.lethe/memory/`, episodes to `~/.lethe/projects/<key>/`. Outside a repository
+claims fall back to the episode directory. The only decision is whether the claims are
+committed, and it lives in `.lethe/.gitignore` — so `lethe init` writes that file before
+the first memory exists, and nothing turns up in someone's `git status` uninvited.
 
 ## Memory
 

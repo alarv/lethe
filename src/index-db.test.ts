@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { withStore } from "./testing.js";
-import { MemoryIndex } from "./index-db.js";
+import { MemoryIndex, type IndexFile } from "./index-db.js";
+import { claimDir, episodeDir, legacyClaimDir, parse } from "./store.js";
 
 /**
  * Whether node:sqlite exists here. MemoryIndex.open returns null rather than
@@ -18,6 +19,37 @@ const available = (() => {
   return true;
 })();
 
+/**
+ * Every memory file for a workspace, described the way search() describes them.
+ *
+ * The index does not read files any more: it is handed paths with an mtime and a
+ * size, diffs those against what it already holds, and calls back only for the
+ * ones that moved. Enumerating real files here rather than faking them is
+ * deliberate -- it means these tests exercise the actual change signal, so a
+ * rewrite that keeps the same size still has to be noticed.
+ */
+function filesOf(workspace: string): IndexFile[] {
+  const out: IndexFile[] = [];
+  for (const dir of new Set([episodeDir(workspace), claimDir(workspace), legacyClaimDir()])) {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names.filter((n) => n.endsWith(".md"))) {
+      const path = join(dir, name);
+      const st = statSync(path);
+      out.push({ path, mtimeMs: st.mtimeMs, size: st.size, project: "" });
+    }
+  }
+  return out;
+}
+
+function syncFrom(ix: MemoryIndex, workspace: string): void {
+  ix.sync(filesOf(workspace), (f) => parse(readFileSync(f.path, "utf8")));
+}
+
 function indexIn(home: string): MemoryIndex {
   const ix = MemoryIndex.open(join(home, "index.db"));
   assert.ok(ix, "expected an index");
@@ -26,12 +58,12 @@ function indexIn(home: string): MemoryIndex {
 
 test("syncs memories and finds them by word", async (t) => {
   if (!available) return t.skip("node:sqlite unavailable");
-  await withStore(async (store, home) => {
+  await withStore(async (store, home, workspace) => {
     store.create({ kind: "claim", title: "tests need containers",
       body: "you must run docker compose up first or the suite fails" });
     store.create({ kind: "claim", title: "unrelated", body: "something about jwt tokens" });
     const ix = indexIn(home);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     const hits = ix.search("docker", 5);
     assert.equal(hits.length, 1);
     const expected = store.all().find((m) => m.title.includes("containers"))!;
@@ -43,11 +75,11 @@ test("syncs memories and finds them by word", async (t) => {
 
 test("finds an exact command as a phrase, which is why detail='full' is used", async (t) => {
   if (!available) return t.skip("node:sqlite unavailable");
-  await withStore(async (store, home) => {
+  await withStore(async (store, home, workspace) => {
     store.create({ kind: "claim", title: "setup", body: "run docker compose up before the suite" });
     store.create({ kind: "claim", title: "other", body: "compose a docker image up somewhere" });
     const ix = indexIn(home);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     assert.equal(ix.searchPhrase("docker compose up", 5).length, 1,
       "only the adjacent phrase should match");
     ix.close();
@@ -56,10 +88,10 @@ test("finds an exact command as a phrase, which is why detail='full' is used", a
 
 test("a query with no usable terms returns nothing and does not throw", async (t) => {
   if (!available) return t.skip("node:sqlite unavailable");
-  await withStore(async (store, home) => {
+  await withStore(async (store, home, workspace) => {
     store.create({ kind: "claim", title: "x", body: "y" });
     const ix = indexIn(home);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     assert.deepEqual(ix.search("a an of", 5), []);
     ix.close();
   });
@@ -67,14 +99,14 @@ test("a query with no usable terms returns nothing and does not throw", async (t
 
 test("rewriting a memory does not leave the old terms searchable", async (t) => {
   if (!available) return t.skip("node:sqlite unavailable");
-  await withStore(async (store, home) => {
+  await withStore(async (store, home, workspace) => {
     const m = store.create({ kind: "claim", title: "old", body: "kubernetes ingress trouble" });
     const ix = indexIn(home);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     assert.equal(ix.search("kubernetes", 5).length, 1);
     m.body = "postgres connection pooling";
     store.write(m);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     assert.equal(ix.search("kubernetes", 5).length, 0, "stale term still searchable");
     assert.equal(ix.search("postgres", 5).length, 1);
     ix.close();
@@ -83,13 +115,13 @@ test("rewriting a memory does not leave the old terms searchable", async (t) => 
 
 test("deleted memories leave the index", async (t) => {
   if (!available) return t.skip("node:sqlite unavailable");
-  await withStore(async (store, home) => {
+  await withStore(async (store, home, workspace) => {
     const m = store.create({ kind: "claim", title: "temp", body: "rabbitmq queue depth" });
     const ix = indexIn(home);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     assert.equal(ix.search("rabbitmq", 5).length, 1);
     store.remove(m.id);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     assert.equal(ix.search("rabbitmq", 5).length, 0);
     ix.close();
   });
@@ -97,12 +129,12 @@ test("deleted memories leave the index", async (t) => {
 
 test("a corrupt index rebuilds instead of crashing", async (t) => {
   if (!available) return t.skip("node:sqlite unavailable");
-  await withStore(async (store, home) => {
+  await withStore(async (store, home, workspace) => {
     store.create({ kind: "claim", title: "x", body: "elasticsearch shard allocation" });
     writeFileSync(join(home, "index.db"), "this is not a database at all");
     const ix = MemoryIndex.open(join(home, "index.db"));
     assert.ok(ix, "a corrupt index must not prevent opening");
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     assert.equal(ix.search("elasticsearch", 5).length, 1);
     ix.close();
   });
@@ -110,13 +142,13 @@ test("a corrupt index rebuilds instead of crashing", async (t) => {
 
 test("carries supersededBy through so the ranker can resolve forward", async (t) => {
   if (!available) return t.skip("node:sqlite unavailable");
-  await withStore(async (store, home) => {
+  await withStore(async (store, home, workspace) => {
     const claim = store.create({ kind: "claim", title: "claim", body: "guard shared state" });
     const ep = store.create({ kind: "episode", title: "episode", body: "memcached eviction storm" });
     ep.supersededBy = claim.id;
     store.write(ep);
     const ix = indexIn(home);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     const hits = ix.search("memcached", 5);
     assert.equal(hits.length, 1);
     assert.equal(hits[0]!.supersededBy, claim.id);
@@ -126,12 +158,12 @@ test("carries supersededBy through so the ranker can resolve forward", async (t)
 
 test("reports its size on disk", async (t) => {
   if (!available) return t.skip("node:sqlite unavailable");
-  await withStore(async (store, home) => {
+  await withStore(async (store, home, workspace) => {
     for (let i = 0; i < 20; i++) {
       store.create({ kind: "claim", title: `m${i}`, body: `body number ${i} about caching` });
     }
     const ix = indexIn(home);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     assert.ok(ix.bytes() > 0, "an index with rows must have a size");
     ix.close();
   });
@@ -140,13 +172,13 @@ test("reports its size on disk", async (t) => {
 test("an unchanged store is not reindexed, so a read-only search does no writes", async (t) => {
   if (!available) return t.skip("node:sqlite unavailable");
   const { statSync } = await import("node:fs");
-  await withStore(async (store, home) => {
+  await withStore(async (store, home, workspace) => {
     for (let i = 0; i < 30; i++) {
       store.create({ kind: "claim", title: `m${i}`, body: `body ${i} about consul and vault` });
     }
     const path = join(home, "index.db");
     const ix = indexIn(home);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     ix.close();
 
     const size = statSync(path).size;
@@ -154,7 +186,7 @@ test("an unchanged store is not reindexed, so a read-only search does no writes"
     // left over half the real index as free pages.
     for (let i = 0; i < 10; i++) {
       const again = indexIn(home);
-      again.sync(store.all());
+      syncFrom(again, workspace);
       again.search("consul", 5);
       again.close();
     }
@@ -164,13 +196,13 @@ test("an unchanged store is not reindexed, so a read-only search does no writes"
 
 test("a changed store is reindexed", async (t) => {
   if (!available) return t.skip("node:sqlite unavailable");
-  await withStore(async (store, home) => {
+  await withStore(async (store, home, workspace) => {
     store.create({ kind: "claim", title: "first", body: "vault seal status" });
     const ix = indexIn(home);
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     assert.equal(ix.search("nomad", 5).length, 0);
     store.create({ kind: "claim", title: "second", body: "nomad job allocation" });
-    ix.sync(store.all());
+    syncFrom(ix, workspace);
     assert.equal(ix.search("nomad", 5).length, 1, "a new memory must become searchable");
     ix.close();
   });
@@ -182,7 +214,7 @@ test("deleting many memories shrinks the file rather than leaving free pages", a
   await windowShrink();
 
   async function windowShrink() {
-    await withStore(async (store, home) => {
+    await withStore(async (store, home, workspace) => {
       const ids: string[] = [];
       for (let i = 0; i < 300; i++) {
         ids.push(store.create({
@@ -192,11 +224,11 @@ test("deleting many memories shrinks the file rather than leaving free pages", a
         }).id);
       }
       const ix = indexIn(home);
-      ix.sync(store.all());
+      syncFrom(ix, workspace);
       const full = ix.bytes();
 
       for (const id of ids.slice(0, 280)) store.remove(id);
-      ix.sync(store.all());
+      syncFrom(ix, workspace);
       const shrunk = ix.bytes();
       ix.close();
 
@@ -204,4 +236,92 @@ test("deleting many memories shrinks the file rather than leaving free pages", a
         `index did not shrink after deleting 280 of 300 memories (${full} -> ${shrunk})`);
     });
   }
+});
+
+// ------------------------------------------------- incremental, not rebuilt
+
+/** syncFrom, but reporting which files it actually had to read. */
+function syncCounting(ix: MemoryIndex, workspace: string): string[] {
+  const read: string[] = [];
+  ix.sync(filesOf(workspace), (f) => {
+    read.push(f.path);
+    return parse(readFileSync(f.path, "utf8"));
+  });
+  return read;
+}
+
+test("sync reads only the files that changed", async (t) => {
+  if (!available) return t.skip("node:sqlite unavailable");
+  await withStore(async (store, home, workspace) => {
+    for (let i = 0; i < 6; i++) {
+      store.create({ kind: "claim", title: `m${i}`, body: `body ${i} about terraform drift` });
+    }
+    const ix = indexIn(home);
+
+    assert.equal(syncCounting(ix, workspace).length, 6, "a cold index must read everything once");
+    assert.deepEqual(syncCounting(ix, workspace), [],
+      "an unchanged store must read nothing at all");
+
+    // This is the whole point of the change. Writing one memory used to
+    // invalidate a fingerprint taken over every memory in every project, so the
+    // cost of one note was a full rebuild of the entire cross-project store --
+    // 4.4 seconds per recall measured at 36,000 memories.
+    const fresh = store.create({ kind: "claim", title: "new", body: "consul acl bootstrap" });
+    const afterAdd = syncCounting(ix, workspace);
+    assert.equal(afterAdd.length, 1, `one new memory must cost one read, read ${afterAdd.length}`);
+
+    fresh.body = "vault kv rotation";
+    store.write(fresh);
+    assert.equal(syncCounting(ix, workspace).length, 1, "one edit must cost one read");
+    assert.equal(ix.search("consul", 5).length, 0, "the replaced term must not survive");
+    assert.equal(ix.search("vault", 5).length, 1);
+
+    store.remove(fresh.id);
+    assert.deepEqual(syncCounting(ix, workspace), [],
+      "a deletion is a row to drop, not a file to read");
+    assert.equal(ix.search("vault", 5).length, 0);
+    ix.close();
+  });
+});
+
+test("a hit carries where to load it from, so recall reads only the hits", async (t) => {
+  if (!available) return t.skip("node:sqlite unavailable");
+  await withStore(async (store, home, workspace) => {
+    for (let i = 0; i < 20; i++) {
+      store.create({ kind: "claim", title: `noise ${i}`, body: `filler ${i} about nothing` });
+    }
+    const wanted = store.create({ kind: "claim", title: "the one", body: "clickhouse merge tree" });
+    const ix = indexIn(home);
+    syncFrom(ix, workspace);
+
+    const hits = ix.search("clickhouse", 5);
+    assert.equal(hits.length, 1);
+    assert.ok(hits[0]!.path.endsWith(".md"), "a hit must say which file it came from");
+    assert.equal(hits[0]!.project, "", "a memory of this project is not borrowed");
+    assert.equal(parse(readFileSync(hits[0]!.path, "utf8"))!.id, wanted.id);
+    ix.close();
+  });
+});
+
+test("locate finds a successor by id, which is rarely a hit itself", async (t) => {
+  if (!available) return t.skip("node:sqlite unavailable");
+  await withStore(async (store, home, workspace) => {
+    const claim = store.create({ kind: "claim", title: "claim", body: "guard shared state" });
+    const ep = store.create({ kind: "episode", title: "episode", body: "riak handoff stall" });
+    ep.supersededBy = claim.id;
+    store.write(ep);
+    const ix = indexIn(home);
+    syncFrom(ix, workspace);
+
+    // The episode matches the query; the claim that replaced it does not, and is
+    // what has to come back. Without this the consolidation is undone at
+    // retrieval time.
+    const hits = ix.search("riak", 5);
+    assert.equal(hits[0]!.supersededBy, claim.id);
+    const found = ix.locate([claim.id]);
+    assert.equal(found.length, 1);
+    assert.equal(parse(readFileSync(found[0]!.path, "utf8"))!.id, claim.id);
+    assert.deepEqual(ix.locate([]), []);
+    ix.close();
+  });
 });

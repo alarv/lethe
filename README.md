@@ -100,36 +100,45 @@ npx @alarv/lethe doctor
 Needs Node 22+. On older versions retrieval falls back to a simpler ranker rather than
 failing.
 
-### Decide where memory lives
+### Decide whether memory is committed
 
-Run this once per project — it asks, and writes the answer to `.lethe/config.json`:
+Memory goes where it belongs without being told. Consolidated **claims** land in
+`<repo>/.lethe/memory/`, beside the code they describe; raw **episodes** land in
+`~/.lethe/projects/<project>/` and are never written into a repository. There is no scope
+to choose and nothing to configure.
+
+That leaves exactly one question, which `lethe init` asks once per project:
 
 ```sh
 npx @alarv/lethe init
 ```
 
 ```
-where should the agent's consolidated claims go?
+this project's consolidated claims should be
 
-  1  in this repo, committed      your team inherits them; you review them in diffs
-  2  in this repo, git-ignored    you read them in your editor; nobody else sees them
-  3  outside the repo            in ~/.lethe, keyed to this project; the repo is left alone
-  4  with you, in every project  in ~/.lethe/memory; follows you rather than the code
+  1  committed     anyone who can clone this repo inherits them; best for a private repo
+  2  git-ignored   you read them in your editor; nobody else ever sees them
 ```
 
-It then asks whether that applies to this project or becomes your default everywhere.
-To skip the questions — in a script, or because you already know:
+**Committed is for private repositories.** The audience for committed memory is whoever
+can clone the repo, and in a public one that is everybody. Distilled claims routinely name
+internal services, deploy steps and the reasoning behind decisions — none of it secret,
+all of it context you probably did not mean to publish. lethe cannot check visibility for
+you (that is a property of the host, not the checkout) so it says so and leaves the call
+to you.
+
+To skip the question — in a script, or because you already know:
 
 ```sh
-lethe init --scope=team              # in this repo, committed
-lethe init --scope=team --private    # in this repo, git-ignored
-lethe init --scope=local             # outside the repo (the default)
-lethe init --global --scope=team     # make it the default for every project
+lethe init --share               # committed
+lethe init --private             # git-ignored
+lethe init --global --share      # what projects that have not chosen start from
 ```
 
-Config is read from `~/.lethe/config.json` first, then `<repo>/.lethe/config.json`, so a
-project can always override your global default. `lethe doctor` prints both files and
-marks which one won.
+Both answers write to the same directory, so **changing your mind later moves no files**:
+it comments three lines in `.lethe/.gitignore` in or out. That file, not a config
+setting, is the decision — which is why nothing can disagree with it. `lethe doctor` asks
+git what actually happened.
 
 **lethe never edits your root `.gitignore`.** The rules live in `.lethe/.gitignore`,
 which governs its own directory — so the whole install is one folder, and uninstalling
@@ -137,22 +146,23 @@ is `rm -rf .lethe`:
 
 ```gitignore
 *
-!.gitignore
-!config.json
-!memory/          # comment these two out and claims stay on this machine
+!.gitignore       # comment all three out and git sees no .lethe/ at all
+!memory/
 !memory/*.md
 ```
 
 It's a whitelist, so anything a later version writes into that directory is ignored by
-default rather than turning up in someone's commit. Those two lines are the entire
+default rather than turning up in someone's commit. Those three lines are the entire
 sharing decision; `lethe init` toggles them and leaves any line you added by hand alone.
+When they are commented out, this file ignores itself too — a `.gitignore` applies to its
+own directory whether or not git tracks it — so `git status` stays completely clean and
+private memory is not something you discover in a diff.
 
-**This only decides where *claims* go.** Episodes — the raw, verbose record of what
-happened in a session — always live in `~/.lethe/projects/<project>/`, are private to
-you, and are never written into a repository whatever the scope says. `lethe where` shows
-both. Choosing `team` and then ignoring the claims anyway is the one genuinely confusing
-state: they sit in your repo looking shared and are committed nowhere. `lethe doctor`
-fails loudly on it.
+**Episodes are not part of this decision.** The raw, verbose record of what happened in
+a session always lives in `~/.lethe/projects/<project>/`, is private to you, and is never
+written into a repository. `lethe where` shows both paths. The one state still worth
+watching for is claims that are neither ignored nor committed — sharing is on and nobody
+ran `git add` — and `lethe doctor` warns about exactly that.
 
 ### One more step, and it's the one that matters
 
@@ -202,10 +212,10 @@ Readable, diffable, reviewable in a pull request. `git blame` works on your agen
 memory. Nothing is locked in a database you can't inspect — and if you delete lethe
 tomorrow, you keep the markdown.
 
-By default everything stays on your machine (`~/.lethe/`). Opt into `team` scope and
-*claims* land in the repo, so your team reviews what the agent learned before it becomes
-shared knowledge — see [Decide where memory lives](#decide-where-memory-lives). Episodes
-never move: they are a private scratchpad that consolidation eventually consumes.
+Claims land in the repo so your team can review what the agent learned before it becomes
+shared knowledge; whether they are committed is one line in `.lethe/.gitignore` — see
+[Decide whether memory is committed](#decide-whether-memory-is-committed). Episodes never
+move: they are a private scratchpad that consolidation eventually consumes.
 
 ### Day to day
 
@@ -215,6 +225,32 @@ lethe ls                               # everything recorded
 lethe status                           # is it working?
 lethe metrics                          # is it being used, and is it distilling?
 lethe compact --dry-run                # preview consolidation
+lethe gc                               # what is in ~/.lethe, and what is dead in it
+```
+
+### It cleans up after itself
+
+`~/.lethe` is the one directory lethe grows where you are not looking, so nothing in it is
+left to accumulate:
+
+- **The index prunes itself.** Rows for files that no longer exist go on the next sync.
+  Recall reads only the files that changed and only the results it returns — it never
+  parses the whole store, which is what used to make one recall cost 4.4 seconds on a
+  36,000-memory store.
+- **The log is off by default**, because appending forever to a file in your home
+  directory is not a diagnostic. `lethe init --debug` turns it on; it rotates at 512 KB
+  and keeps one previous copy. With it off, `lethe metrics` and the activity rows in
+  `status` and `doctor` say so rather than reporting zero.
+- **Dead project directories are collected** as compaction passes — but only ones holding
+  no memories. A directory that still has memories is never removed automatically, however
+  missing its repository looks, because a path that is gone today is as likely to be an
+  unmounted disk or a moved checkout. `lethe gc` names those; `lethe gc --dead` removes
+  them once you have looked.
+
+```sh
+lethe gc --dry-run     # say what would go, change nothing
+lethe gc --dead        # also drop directories whose project is gone
+lethe gc --reindex     # throw the index away; it rebuilds on the next recall
 ```
 
 ## Why a seahorse

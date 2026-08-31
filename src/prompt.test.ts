@@ -77,22 +77,27 @@ test("every option is printed with its number and consequence", async () => {
   assert.match(out, /the second one/);
 });
 
-test("the four placements cover the scope-and-sharing matrix exactly once", () => {
-  const seen = PLACEMENTS.map((p) => `${p.scope}/${p.share}`);
-  assert.deepEqual(seen, ["team/true", "team/false", "local/false", "personal/false"]);
-  assert.equal(new Set(seen).size, PLACEMENTS.length);
-});
-
-test("only the in-repo placements require a repository", () => {
-  // init filters on this when the cwd is not a git repo; getting it wrong
-  // offers an option that throws in memoryDir the moment it is chosen.
-  assert.deepEqual(PLACEMENTS.map((p) => p.needsRepo), [true, true, false, false]);
+test("the two placements are the sharing decision and nothing else", () => {
+  // Four options across three scope words became two options across one bit.
+  // Both write to the same directory; only git's view of it differs.
+  assert.deepEqual(PLACEMENTS.map((p) => p.share), [true, false]);
+  assert.equal(PLACEMENTS.length, 2);
 });
 
 test("no placement label mentions a scope name", () => {
-  // The whole point is that "team" did not tell anyone whether their memories
-  // were shared. Labels describe who can read the files.
+  // The whole point is that a scope word never told anyone whether their
+  // memories were shared. Labels describe who can read the files.
   for (const p of PLACEMENTS) {
-    assert.doesNotMatch(p.label, /\b(team|local|personal|scope)\b/i, `label: ${p.label}`);
+    assert.doesNotMatch(p.label, /\b(scope|local|team|personal|global|shared)\b/i, `label: ${p.label}`);
   }
+});
+
+test("the committed option says who the audience is", () => {
+  // Committed memory is readable by whoever can clone the repo, which in a
+  // public one is everybody, and distilled claims name internal services and
+  // deploy steps. lethe cannot check visibility -- that belongs to the host, not
+  // the checkout -- so the option itself has to carry the warning.
+  const committed = PLACEMENTS.find((p) => p.share)!;
+  assert.match(committed.detail, /private repo/i);
+  assert.match(committed.detail, /clone/i);
 });

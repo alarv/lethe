@@ -61,9 +61,22 @@ function parse(lines: string[]): Entry[] {
   return out;
 }
 
+/**
+ * The whole log, oldest first, across a rotation.
+ *
+ * The rotated half has to be included or metrics silently restart from zero
+ * every time the log fills -- which would make adoption look like it collapsed
+ * on a day when nothing happened but a rename.
+ */
 export function readLog(path = LOG_PATH): string[] {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8").split("\n").filter(Boolean);
+  const read = (p: string): string[] => {
+    try {
+      return existsSync(p) ? readFileSync(p, "utf8").split("\n").filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  };
+  return [...read(`${path}.1`), ...read(path)];
 }
 
 /**

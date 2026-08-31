@@ -51,7 +51,7 @@ shared, it lives only in the local index — it is never committed.
 Slow, curated, small. The store retrieval mostly hits.
 
 ```
-id, claim, scope, confidence, provenance[], superseded_by,
+id, claim, confidence, provenance[], superseded_by,
 created, last_accessed, access_count, strength
 ```
 
@@ -78,22 +78,28 @@ retrieved on query.
 
 ```
 <repo>/.lethe/
-  memory/*.md        ← committed. team memory. mergeable, diffable, reviewable.
-  config.json        ← committed.
-  index.db           ← gitignored. derived. rebuild: `lethe index`
+  memory/*.md        ← claims and patterns. committed, or not, per .gitignore below.
+  .gitignore         ← committed. the whole of the sharing decision.
 
 ~/.lethe/
-  memory/*.md        ← personal memory. never shared, never committed.
-  index.db           ← derived.
+  projects/<key>/
+    memory/*.md      ← episodes. never shared, never committed.
+    dynamics.json    ← per-machine strength and access counts.
   index.db           ← derived FTS5 index. Disposable; rebuilt from the markdown.
+  lethe.log          ← off by default. `lethe init --debug`; rotates at 512 KB.
 ```
+
+Nothing here grows unattended. The index prunes rows for files that no longer exist, the
+log rotates and keeps one previous copy, and project directories left behind by
+repositories that no longer exist are collected by `compact()` as it passes — but only
+the ones holding no memories. See § Housekeeping.
 
 **Where a memory lives is decided by what it is, not by who asks.**
 
 | Kind | Location | Shared |
 |---|---|---|
 | `episode` | always `~/.lethe/projects/<key>/` | never |
-| `claim`, `pattern` | the configured scope; `team` puts them in the repo | yes, by default |
+| `claim`, `pattern` | `<repo>/.lethe/memory/` | if `.lethe/.gitignore` says so |
 
 Episodes are a private scratchpad: verbose, numerous, and deleted by compaction. Three
 hundred people's scratchpads is noise, not knowledge, and sharing them is the fastest
@@ -101,8 +107,11 @@ way to make shared memory useless. Claims and patterns are what survived, and ar
 only things worth anyone else reading -- so **compaction is the promotion step from
 private experience to shared knowledge.**
 
-This also removes a defect: scope used to travel with a memory, so compacting a cluster
-that spanned scopes could silently turn team memory private.
+This also removed a defect and then removed its cause. Scope used to travel with a
+memory, so compacting a cluster that spanned scopes could silently turn shared memory
+private; deriving the path from the kind fixed that. There is now no scope at all — two
+of the three names described reach rather than audience, nobody could keep them apart,
+and a `team` scope claimed sharing that a `.gitignore` line could silently revoke.
 
 ### Reading across projects
 
@@ -163,12 +172,47 @@ own; the database is what makes it fast.
 The payoff is that `sleep` produces a **readable diff a team can approve in a PR**. See
 `docs/compact.md`.
 
+## Housekeeping
+
+`~/.lethe` is the one place lethe grows where nobody is looking, and until now nothing
+collected any of it: project directories accumulated forever, the log had no cap, and the
+index rebuilt rather than pruned. On the author's own machine that was eighteen project
+directories, ten of them `/private/var/folders/.../tmp-xxxx` leftovers from test runs that
+will never exist again.
+
+The rule that decides what may be removed without asking:
+
+> **Scaffolding is disposable. Markdown is not.**
+
+| What | When | Who |
+|---|---|---|
+| index rows for files that are gone | every sync | the sync diff, no scheduler |
+| the log, past 512 KB | on write | one rotation, one previous copy kept |
+| project dirs holding **no** memories | during `compact()` | automatic, unmentioned |
+| project dirs holding memories, path gone | never automatically | reported; `lethe gc --dead` |
+
+The last row is the important one. A source path that is missing today is as likely to be
+an unmounted volume, a moved checkout or a different machine as it is a repository that
+was deleted, and losing memories to a filesystem inference is a far worse failure than
+keeping a stale folder. `lethe doctor` and `lethe gc` name them and stop there.
+
+Cleanup rides along with `compact()` rather than running on a timer, because compaction is
+already triggered by use, already off the latency path, and is already the pass that
+decides what does not deserve to survive. Both questions have the same shape.
+
+The log is off by default for the same reason: appending forever to a file in someone's
+home directory is not a diagnostic, it is a leak. `lethe init --debug` turns it on.
+Everything derived from it — `lethe metrics`, and the activity rows in `status` and
+`doctor` — then reports that logging is off rather than reporting zero activity, because
+"nothing happened" and "nothing was written down" are different answers and only one of
+them is a problem.
+
 ## Retrieval
 
 Retrieval is layered, and the layers answer different questions.
 
 ```
-markdown            the truth
+stat markdown       which files moved since last time    (mtime + size)
    │
    ▼
 ~/.lethe/index.db   which ids match this query, and how well   (FTS5 + bm25)
@@ -177,8 +221,27 @@ markdown            the truth
 src/rank.ts         which of those deserve to surface          (memory dynamics)
    │
    ▼
-read markdown       return the top N
+read markdown       only the hits, and their successors
 ```
+
+**Recall never reads the whole store.** It used to: every query parsed every memory in
+every project to hand the index a corpus to fingerprint, so the cost of one recall — and
+of one `note`, which invalidated that fingerprint — scaled with everything you had ever
+written. Measured on a 36,000-memory store across 36 projects, that was 4.4 seconds per
+recall.
+
+Now the unit of change is a file. Enumeration stats rather than reads; anything whose
+path, mtime and size are unchanged is left alone; only new or modified files are parsed
+and reindexed; anything no longer listed is dropped, which is also how the index
+garbage-collects itself. Then only the hits are read off disk, plus the successors of any
+that were superseded. Same corpus, same query: 373 ms, and 53 ms at 9,000 memories.
+
+mtime is trusted because every write goes through a temp file and a rename, which always
+moves it forward; size is carried too, so an edit landing inside the same millisecond is
+still seen. A per-directory mtime gate would cut thousands of stat calls to dozens and is
+deliberately not done — it would miss a file an editor rewrote in place, and a silently
+stale index is the worst outcome available here. `lethe gc --reindex` is the escape hatch
+if a filesystem with coarse timestamps ever hides an edit.
 
 The load-bearing property: **the index stores ids and scores, never content.** The FTS5
 tables are declared `content=''`, so no memory text is duplicated into the database. That

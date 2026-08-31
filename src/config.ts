@@ -1,44 +1,44 @@
 /**
  * Configuration.
  *
- * Resolution order, most specific first:
+ * There is one setting, in one file:
  *
- *   LETHE_SCOPE=...              environment, for one-off runs
- *   <repo>/.lethe/config.json    this project
- *   ~/.lethe/config.json         everything
- *   built-in default
+ *   ~/.lethe/config.json    { "share": true }
  *
- * There is deliberately very little here. Configuration is a cost paid by every
- * reader, so anything that can be inferred should be inferred -- see
- * docs/api-design.md.
+ * and it supplies nothing but the default answer `lethe init` offers in a
+ * project that has not been set up yet. It is never consulted when a memory is
+ * written.
+ *
+ * That is the point. Where a memory goes is derived from what it is (store.ts),
+ * and whether a project's claims are shared is recorded in that project's
+ * `.lethe/.gitignore` -- the file git actually reads. A `scope` setting used to
+ * duplicate that second fact, so config and git could disagree, and `lethe
+ * doctor` grew a whole section whose job was to explain which one had won.
+ * Deleting the setting deleted the disagreement. Configuration is a cost paid by
+ * every reader -- see docs/api-design.md.
  */
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { findProjectRoot, letheHome, type Scope } from "./store.js";
+import { findProjectRoot, letheHome } from "./store.js";
 
 export interface Config {
-  /** Where memories go when a tool does not say. */
-  scope?: Scope;
-}
-
-const SCOPES = new Set<Scope>(["local", "team", "personal"]);
-
-/** Every valid scope, in the order they are worth explaining. */
-export const SCOPE_NAMES: readonly Scope[] = ["local", "team", "personal"];
-
-/**
- * Guard for anything that claims to be a scope.
- *
- * Exported because an unrecognised value used to be accepted in silence:
- * `lethe init --scope=banana` wrote `"banana"` to config.json, said "default
- * scope banana", and then resolved to `local` -- so the setting appeared to
- * take and did not. That is the exact failure the config rows in `lethe doctor`
- * exist to answer, and it was pointing at a file it could not read.
- */
-export function isScope(value: unknown): value is Scope {
-  return typeof value === "string" && SCOPES.has(value as Scope);
+  /**
+   * Commit new projects' claims by default?
+   *
+   * Read only by `lethe init`, and only when the project has no
+   * `.lethe/.gitignore` yet. Once that file exists it is the answer.
+   */
+  share?: boolean;
+  /**
+   * Write the diagnostic log to `~/.lethe/lethe.log`?
+   *
+   * Off by default -- see log.ts. Set by `lethe init --debug`. Read by log.ts
+   * directly out of the JSON rather than through this module, which would close
+   * an import cycle, so this field documents it rather than serving it.
+   */
+  log?: boolean;
 }
 
 function read(path: string): Config {
@@ -54,28 +54,19 @@ export function globalConfigPath(): string {
   return join(letheHome(), "config.json");
 }
 
-export function projectConfigPath(cwd = process.cwd()): string | null {
-  const root = findProjectRoot(cwd);
-  return root ? join(root, ".lethe", "config.json") : null;
+export function loadConfig(): Config {
+  return read(globalConfigPath());
 }
 
-export function loadConfig(cwd = process.cwd()): Config {
-  const merged: Config = { ...read(globalConfigPath()) };
-  const project = projectConfigPath(cwd);
-  if (project) Object.assign(merged, read(project));
-
-  const env = process.env.LETHE_SCOPE as Scope | undefined;
-  if (env && SCOPES.has(env)) merged.scope = env;
-  return merged;
-}
-
-/** The scope to use when a caller does not specify one. */
-export function defaultScope(cwd = process.cwd()): Scope {
-  const s = loadConfig(cwd).scope;
-  if (!s || !SCOPES.has(s)) return "local";
-  // team scope needs somewhere to put the files.
-  if (s === "team" && !findProjectRoot(cwd)) return "local";
-  return s;
+/**
+ * What `lethe init` offers when a project has not chosen yet.
+ *
+ * Private unless you said otherwise: writing memories into a repository is one
+ * thing, publishing them to everyone who clones it is another, and the second
+ * should never be the consequence of not answering a question.
+ */
+export function shareDefault(): boolean {
+  return loadConfig().share === true;
 }
 
 export function writeConfig(path: string, next: Config): void {
@@ -86,9 +77,11 @@ export function writeConfig(path: string, next: Config): void {
 }
 
 /**
- * Storing memory in the repo and committing it are separate decisions: the
- * point of `team` scope is usually to keep data out of the home directory, not
- * necessarily to share it. This is where that second decision is recorded.
+ * The only thing a project decides: are its claims committed?
+ *
+ * Claims are written into `<repo>/.lethe/memory/` either way -- see store.ts §
+ * claimDir -- so this file holds the whole of the sharing decision, and
+ * flipping it moves no files at all.
  *
  * The rules go in `<repo>/.lethe/.gitignore`, not the repository root. A
  * subdirectory .gitignore governs its own directory, and patterns in the deeper
@@ -104,14 +97,27 @@ export function writeConfig(path: string, next: Config): void {
  * be protecting `.lethe/episodes/`, a directory that has never existed.
  *
  * Only claims are ever written into the repository. Episodes live under
- * `~/.lethe/projects/<key>/` no matter what the scope says, and the store
- * relocates any that predate that rule.
+ * `~/.lethe/projects/<key>/` whatever else is here, and the store relocates
+ * any that predate that rule.
  */
 export type IgnoreResult = "added" | "updated" | "present" | "foreign" | "failed";
 
-/** The one decision in the file: uncommented, claims are committed. */
-const CLAIM_LINES = ["!memory/", "!memory/*.md"];
-const CLAIM_PATTERN = /^\s*(#\s*)?!memory\//;
+/**
+ * The one decision in the file: uncommented, claims are committed.
+ *
+ * `!.gitignore` is part of it. When claims are private, nothing in `.lethe/`
+ * is git's business -- including this file -- and a .gitignore applies to its
+ * own directory whether or not git tracks it. Leaving it un-ignored meant
+ * `lethe init --private` still left `?? .lethe/` sitting in `git status`, which
+ * is precisely the "discover it in git status" outcome the layout exists to
+ * avoid. When claims are shared the rules have to travel with the repo, so it
+ * comes back.
+ */
+const CLAIM_LINES = ["!.gitignore", "!memory/", "!memory/*.md"];
+const CLAIM_PATTERN = /^\s*(#\s*)?!(memory\/|\.gitignore\s*$)/;
+
+/** Only the memory lines answer "is this shared"; .gitignore follows them. */
+const SHARED_PATTERN = /^\s*!memory\//;
 
 function renderIgnore(share: boolean): string {
   return [
@@ -119,17 +125,15 @@ function renderIgnore(share: boolean): string {
     "# edits a .gitignore you own, and `rm -rf .lethe` leaves nothing behind.",
     "#",
     "# Everything is ignored by default, so anything a later version writes here",
-    "# cannot reach a commit by accident. The two !memory lines are the whole",
+    "# cannot reach a commit by accident. The ! lines below are the whole",
     "# decision: uncommented, consolidated claims are committed and anyone",
     "# cloning this repo inherits what has been learned; commented out, they",
-    "# stay on this machine and only you can read them.",
+    "# stay on this machine, and so does this file -- git sees no .lethe/ at all.",
     "#",
     "# Episodes are not listed because they are never here -- they live in",
-    "# ~/.lethe/projects/<key>/ whatever the scope says.",
+    "# ~/.lethe/projects/<key>/, keyed to this project.",
     "",
     "*",
-    "!.gitignore",
-    "!config.json",
     ...CLAIM_LINES.map((l) => (share ? l : `# ${l}`)),
     "",
   ].join("\n");
@@ -149,7 +153,7 @@ export function ignoreInGit(root: string, share: boolean): IgnoreResult {
     // hand survive `lethe init` being run again.
     const lines = readFileSync(path, "utf8").split("\n");
     if (!lines.some((l) => CLAIM_PATTERN.test(l))) return "foreign";
-    const shared = lines.some((l) => /^\s*!memory\//.test(l));
+    const shared = lines.some((l) => SHARED_PATTERN.test(l));
     if (shared === share) return "present";
 
     const next = lines.map((l) =>
@@ -179,35 +183,39 @@ export function staleRootIgnore(root: string): string[] {
 }
 
 // ------------------------------------------------------------ introspection
-// `lethe doctor` has to be able to answer "why is my memory not where I said
-// it should be", and both answers live outside the config file: which config
-// won, and whether git agrees with it.
-
-export interface ConfigSource {
-  path: string;
-  scope: Scope | undefined;
-  exists: boolean;
-}
+// `lethe doctor` has to answer "why is my memory not where I thought", and the
+// answers are no longer in the config file: they are the derived paths and what
+// git does with them.
 
 /**
- * Every place a scope could come from, least specific first.
+ * Config files still carrying the removed `scope` setting.
  *
- * The last entry with a scope is the one that wins, which mirrors how
- * loadConfig merges them.
+ * Nothing reads it, so a file that sets it is a file whose author believes
+ * something untrue about where their memory goes. Silence there would be the
+ * same failure the setting itself used to cause, so doctor names them.
  */
-export function configSources(cwd = process.cwd()): ConfigSource[] {
-  const paths = [globalConfigPath(), projectConfigPath(cwd)].filter((p): p is string => !!p);
-  return paths.map((path) => ({ path, scope: read(path).scope, exists: existsSync(path) }));
+export function staleConfig(cwd = process.cwd()): string[] {
+  const root = findProjectRoot(cwd);
+  const paths = [globalConfigPath(), ...(root ? [join(root, ".lethe", "config.json")] : [])];
+  return paths.filter((path) => {
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      return !!raw && typeof raw === "object" && "scope" in raw;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**
  * What git actually does with the claims in this repository.
  *
- * `team` scope only decides where the files are written. Whether anyone else
- * ever sees them is a separate question that .gitignore answers, and the two
- * disagreeing silently is the trap this exists to catch: lethe's own repo sat
- * at scope=team with `.lethe/memory/` ignored, so nine claims looked shared
- * and were committed nowhere.
+ * The .gitignore line records what was intended; this reports what happened,
+ * and they still come apart. The common case: sharing gets turned on and nobody
+ * ever runs `git add`, so the claims are neither ignored nor committed. lethe's
+ * own repo sat the other way round for weeks -- nine claims that looked shared
+ * and were committed nowhere. So doctor asks git rather than trusting the file
+ * lethe wrote itself.
  */
 export type Sharing = "shared" | "ignored" | "untracked" | "empty" | "unknown";
 

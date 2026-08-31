@@ -87,7 +87,6 @@ undo.
 lethe compact                # consolidate + promote + decay
 lethe compact --dry-run      # print the diff, change nothing
 lethe compact --deep         # also purge cold memories under capacity pressure
-lethe compact --scope=personal
 
 lethe sleep                  # alias for `lethe compact`
 ```
@@ -183,7 +182,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: npx @alarv/lethe compact --scope=project
+      - run: npx @alarv/lethe compact
         env:
           LETHE_API_KEY: ${{ secrets.LETHE_API_KEY }}
       - uses: peter-evans/create-pull-request@v6
@@ -222,8 +221,8 @@ the system, so it is bound by three rules:
 1. **Inspectable.** `--dry-run` must show exactly what would change, and the committed
    artifact must be a readable diff. No opaque rewrites.
 2. **Reversible.** Consolidation deletes episodes, so the claim must carry `provenance`,
-   and in project scope git history is the undo. In personal scope, consolidated
-   episodes go to cold storage before deletion.
+   and where the claims are committed git history is the undo. Where they are not,
+   consolidated episodes go to cold storage before deletion.
 3. **Conservative when uncertain.** A wrong claim stated confidently is worse than no
    claim. Below a confidence threshold, leave the episodes alone and try again next
    cycle with more evidence.
@@ -280,5 +279,5 @@ comparison is `docs/evals.md`.
 - **Decay rate and thresholds.** Guessed initially, tuned by the eval. Too aggressive
   loses real knowledge; too slow and we are just another store that grows forever.
 - **Conflict handling.** When a new claim contradicts an existing one, is that a
-  supersede, or two claims with different scopes? Probably needs the agent, via
-  `lethe_correct`.
+  supersede, or two claims that are both true in different circumstances? Probably needs
+  the agent, via `lethe_correct`.

@@ -8,9 +8,10 @@
  * for a session that can distil them. Decay still runs either way.
  */
 
-import type { Memory, Scope, Store } from "./store.js";
+import type { Memory, Store } from "./store.js";
 import { log } from "./log.js";
 import { selectForEviction } from "./evict.js";
+import { prune, survey } from "./maintain.js";
 import { consolidate } from "./consolidate.js";
 
 /** Asks a model for a completion. Supplied by the MCP host via sampling. */
@@ -19,12 +20,6 @@ export type Distiller = (prompt: string) => Promise<string>;
 export interface CompactOptions {
   /** Memories to keep per project before eviction starts. */
   budget?: number;
-  /**
-   * Where consolidated claims are written. Cannot be inferred from the source
-   * episodes -- those are always stored locally, so they would always say
-   * "local" and a claim could never reach the team.
-   */
-  claimScope?: Scope;
   distil?: Distiller | undefined;
   dryRun?: boolean;
   /** Also purge memories that have decayed below the cold threshold. */
@@ -46,6 +41,8 @@ export interface CompactReport {
   purged: number;
   /** Claims discarded for dropping evidence their sources carried. */
   rejectedNoEvidence: number;
+  /** Dead project directories collected from ~/.lethe on the way past. */
+  sweptProjects: number;
   changes: string[];
 }
 
@@ -100,7 +97,7 @@ export async function compact(
   store: Store,
   opts: CompactOptions = {},
 ): Promise<CompactReport> {
-  const { distil, dryRun = false, deep = false, claimScope = "local" } = opts;
+  const { distil, dryRun = false, deep = false } = opts;
   const report: CompactReport = {
     skippedNoModel: !distil && episodesWaiting(store) > 0,
     clustered: 0,
@@ -110,6 +107,7 @@ export async function compact(
     decayed: 0,
     purged: 0,
     rejectedNoEvidence: 0,
+    sweptProjects: 0,
     changes: [],
   };
   const now = Date.now();
@@ -144,7 +142,6 @@ export async function compact(
 
       const written = store.create({
         kind: "claim",
-        scope: claimScope,
         title: claim.title,
         body: claim.body,
         // Union across sources produced thirty tags and a dozen files on one
@@ -227,6 +224,19 @@ export async function compact(
     if (!dryRun) store.remove(memory.id);
   }
 
+  // 5. Sweep the home directory ---------------------------------------------
+  //
+  // Compaction is already the pass that decides what does not deserve to
+  // survive, already triggered by use, and already off the latency path, so
+  // scaffolding left by projects that no longer exist is collected here rather
+  // than on a timer nobody set. Only directories holding no memories at all --
+  // see maintain.ts for why that line is drawn there and not further.
+  if (!dryRun) {
+    const swept = prune(survey());
+    report.sweptProjects = swept.length;
+    for (const dir of swept) report.changes.push(`swept empty project dir: ${dir}`);
+  }
+
   return report;
 }
 
@@ -240,7 +250,8 @@ export function formatReport(r: CompactReport): string {
     "",
     `  ${r.claimsWritten} claim(s) from ${r.episodesConsumed} episode(s), ` +
       `${r.promoted} promoted, ${r.decayed} decayed, ${r.purged} purged` +
-      (r.rejectedNoEvidence ? `, ${r.rejectedNoEvidence} rejected for dropped evidence` : ""),
+      (r.rejectedNoEvidence ? `, ${r.rejectedNoEvidence} rejected for dropped evidence` : "") +
+      (r.sweptProjects ? `, ${r.sweptProjects} empty project dir(s) swept` : ""),
   ];
   return lines.join("\n");
 }
