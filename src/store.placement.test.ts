@@ -112,3 +112,35 @@ test("episodes an older version wrote into the repo are moved out on open", asyn
     assert.ok(files(episodeDir(workspace)).includes("aaaaaaaa-old.md"));
   });
 });
+
+test("an id resolves to what it means now, through a chain of revisions", async () => {
+  await withStore(async (store) => {
+    const first = store.create({ kind: "claim", title: "first", body: "a" });
+    const second = store.create({ kind: "claim", title: "second", body: "b" });
+    const third = store.create({ kind: "claim", title: "third", body: "c" });
+    first.supersededBy = second.id;
+    store.write(first);
+    second.supersededBy = third.id;
+    store.write(second);
+
+    // An agent holding an id from an earlier recall must not end up confirming
+    // or correcting a memory that has since been replaced.
+    assert.equal(store.get(first.id)!.title, "third");
+    assert.equal(store.get(second.id)!.title, "third");
+    assert.equal(store.get(first.id.slice(0, 8))!.title, "third", "short ids too");
+  });
+});
+
+test("forget deletes exactly what was named, not its replacement", async () => {
+  await withStore(async (store) => {
+    const old = store.create({ kind: "claim", title: "the old one", body: "a" });
+    const live = store.create({ kind: "claim", title: "the live one", body: "b" });
+    old.supersededBy = live.id;
+    store.write(old);
+
+    assert.equal(store.remove(old.id), true);
+    const left = store.all().map((m) => m.title);
+    assert.deepEqual(left, ["the live one"],
+      "asked to delete a memory, deleting its replacement is the worst available reading");
+  });
+});

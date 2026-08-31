@@ -58,6 +58,45 @@ Only episodes above the salience threshold are considered (`docs/architecture.md
 Salience). Most of the buffer is never consolidated and is simply dropped, which is the
 intended behaviour, not a failure.
 
+**Existing claims go in too, and may be revised.** For a long time this step ran blind: it
+saw only unconsolidated episodes, so a lesson learned in two sessions weeks apart was
+written twice and nothing could notice. Measured in lethe's own store — "Compaction
+silently fails when the distiller is unavailable" and "All lethe.log errors are `distil
+failed: no model`" are one lesson, recorded 28 hours apart from different episodes, both
+live.
+
+So live claims are listed alongside the episodes as `C1`, `C2`, …, and a claim may carry a
+`supersedes:` line naming the ones it replaces:
+
+```
+CLAIM
+supersedes: C1
+sources: 3
+title: ...
+END
+```
+
+Four rules keep that from becoming churn:
+
+1. **A revision needs new evidence.** At least one episode in `sources`, always. A rewrite
+   with nothing behind it is churn, and the evidence gate would have nothing to check.
+2. **The evidence gate applies to the replaced claim too.** Supersede a claim and you must
+   keep at least one of its retrievable strings — the same rule as for episodes, one level
+   up. Otherwise "revising" is how a claim's commands quietly disappear.
+3. **A claim is replaced at most once per run.** Two revisions of one claim would leave the
+   loser pointing at a memory that is already cold.
+4. **Patterns are not offered.** They are the promoted survivors; letting an automatic pass
+   demote one is a bigger decision than this step should make. `lethe_correct` still
+   reaches them.
+
+A replaced claim goes cold on exactly the same terms as an episode: the file stays, its id
+keeps resolving forward, and the old wording remains a route to the new claim.
+
+Detecting duplicates lexically is not an option, for the reason recorded in § Grouping is
+the model's job: on a single-project store, unrelated pairs score higher than genuinely
+related ones. The judgement is semantic, so it belongs to the model — and the mechanical
+gate still sits behind it.
+
 ### 2. Promote
 
 Scan for shapes that have recurred `n` times and promote them to `procedural`. A single
@@ -278,6 +317,14 @@ comparison is `docs/evals.md`.
   `LETHE_MAX_RAW_HOURS`), and the eval should replace them with numbers.
 - **Decay rate and thresholds.** Guessed initially, tuned by the eval. Too aggressive
   loses real knowledge; too slow and we are just another store that grows forever.
-- **Conflict handling.** When a new claim contradicts an existing one, is that a
-  supersede, or two claims that are both true in different circumstances? Probably needs
-  the agent, via `lethe_correct`.
+- **Conflict handling.** Consolidation can now revise a claim it recognises as the same
+  lesson, which covers duplication. Contradiction is still open: when a new claim
+  *disagrees* with an existing one, is that a supersede, or two claims that are both true
+  in different circumstances? The model is only asked about sameness, not truth.
+- **Duplicates outside the window.** Only the most salient `MAX_REVISABLE` claims are
+  offered for revision, so a duplicate pair that both rank low waits for a run where one
+  of them matters more. That is a slower merge, not a lost one, but nothing measures how
+  slow.
+- **Pure merges.** Two existing claims that duplicate each other cannot be merged without
+  a fresh episode to hang the revision on. Deliberate — it keeps the evidence gate
+  meaningful — but it means an idle store never tidies itself.

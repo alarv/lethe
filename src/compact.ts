@@ -41,6 +41,8 @@ export interface CompactReport {
   purged: number;
   /** Claims discarded for dropping evidence their sources carried. */
   rejectedNoEvidence: number;
+  /** Existing claims replaced by a revision rather than duplicated beside it. */
+  claimsRevised: number;
   /** Dead project directories collected from ~/.lethe on the way past. */
   sweptProjects: number;
   changes: string[];
@@ -107,6 +109,7 @@ export async function compact(
     decayed: 0,
     purged: 0,
     rejectedNoEvidence: 0,
+    claimsRevised: 0,
     sweptProjects: 0,
     changes: [],
   };
@@ -120,8 +123,13 @@ export async function compact(
   // eleven memories to keep one. Episodes simply wait for a session that can
   // distil them.
   const episodes = store.all().filter((m) => m.kind === "episode" && !m.supersededBy);
+  // Live claims go in as well, so a lesson already recorded can be revised
+  // instead of written twice. Patterns are left out deliberately: they are the
+  // promoted survivors, and letting an automatic pass demote one is a bigger
+  // decision than this is. `correct` still reaches them.
+  const live = store.all().filter((m) => m.kind === "claim" && !m.supersededBy);
   if (distil && episodes.length) {
-    const result = await consolidate(episodes, distil);
+    const result = await consolidate(episodes, distil, live);
     report.clustered = result.accepted.length + result.rejected.length;
     report.rejectedNoEvidence = result.rejected.length;
 
@@ -131,12 +139,15 @@ export async function compact(
       );
     }
 
-    for (const { claim, sources } of result.accepted) {
+    for (const { claim, sources, revises } of result.accepted) {
       report.changes.push(
-        `${sources.length} episode(s) -> "${claim.title}"\n` +
-          sources.map((m) => `    - ${m.title}`).join("\n"),
+        `${sources.length} episode(s)` +
+          (revises.length ? ` + ${revises.length} existing claim(s)` : "") +
+          ` -> "${claim.title}"\n` +
+          [...sources, ...revises].map((m) => `    - ${m.title}`).join("\n"),
       );
       report.episodesConsumed += sources.length;
+      report.claimsRevised += revises.length;
       report.claimsWritten += 1;
       if (dryRun) continue;
 
@@ -150,15 +161,20 @@ export async function compact(
         // agreed on, falling back to the most salient source's own.
         tags: shared(sources.map((m) => m.tags), sources),
         files: shared(sources.map((m) => m.files), sources),
-        salience: Math.max(...sources.map((m) => m.salience)),
-        provenance: sources.map((m) => m.id),
+        // A revision inherits the salience it earned; replacing a claim must
+        // not quietly demote what it knew.
+        salience: Math.max(...[...sources, ...revises].map((m) => m.salience)),
+        provenance: [...sources, ...revises].map((m) => m.id),
       });
 
       // Consumed episodes go cold rather than being deleted (docs/brain.md §7).
       // A claim is a lossy summary, so the trace stays on disk as a second route
       // to it -- which is what makes a mistaken consolidation recoverable rather
       // than destructive, and what pattern completion retrieves through.
-      for (const m of sources) {
+      // A replaced claim goes cold on exactly the same terms as an episode: the
+      // file stays, so a mistaken revision is recoverable and the old wording
+      // remains a route to the new claim through pattern completion.
+      for (const m of [...sources, ...revises]) {
         m.supersededBy = written.id;
         store.write(m);
       }
@@ -250,6 +266,7 @@ export function formatReport(r: CompactReport): string {
     "",
     `  ${r.claimsWritten} claim(s) from ${r.episodesConsumed} episode(s), ` +
       `${r.promoted} promoted, ${r.decayed} decayed, ${r.purged} purged` +
+      (r.claimsRevised ? `, ${r.claimsRevised} claim(s) revised rather than duplicated` : "") +
       (r.rejectedNoEvidence ? `, ${r.rejectedNoEvidence} rejected for dropped evidence` : "") +
       (r.sweptProjects ? `, ${r.sweptProjects} empty project dir(s) swept` : ""),
   ];

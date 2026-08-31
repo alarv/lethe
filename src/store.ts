@@ -284,6 +284,26 @@ export function serialize(m: Memory): string {
   return `---\n${fm}\n---\n\n${m.body}\n`;
 }
 
+/**
+ * Walk supersession to the memory an id now means.
+ *
+ * A successor that is missing -- evicted, or in a project we did not load --
+ * ends the walk where it is: a cold memory is worse than its replacement but far
+ * better than nothing. The seen set is for cycles, which the data should never
+ * contain and which must not hang retrieval if it does.
+ */
+export function follow(from: Memory, byId: Map<string, Memory>): Memory {
+  let at = from;
+  const seen = new Set<string>([from.id]);
+  while (at.supersededBy) {
+    const next = byId.get(at.supersededBy);
+    if (!next || seen.has(next.id)) break;
+    seen.add(next.id);
+    at = next;
+  }
+  return at;
+}
+
 export function parse(text: string): Memory | null {
   const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);
   if (!match) return null;
@@ -556,9 +576,9 @@ export class Store {
    */
   get(id: string): Memory | null {
     const all = this.all();
-    const direct = all.find((m) => m.id === id || m.id.startsWith(id));
-    if (direct) return direct;
-    return all.find((m) => m.provenance.some((p) => p === id || p.startsWith(id))) ?? null;
+    const found = all.find((m) => m.id === id || m.id.startsWith(id))
+      ?? all.find((m) => m.provenance.some((p) => p === id || p.startsWith(id)));
+    return found ? follow(found, new Map(all.map((m) => [m.id, m]))) : null;
   }
 
   write(m: Memory): Memory {
@@ -567,8 +587,16 @@ export class Store {
     return m;
   }
 
+  /**
+   * Delete exactly what was named, without following supersession.
+   *
+   * `get` answers "what does this id mean now", which is what an agent holding
+   * an id from an earlier recall needs. Forget is the one caller that must not
+   * have that: asked to delete a memory, deleting its replacement instead would
+   * be the worst possible reading of the request.
+   */
   remove(id: string): boolean {
-    const m = this.get(id);
+    const m = this.all().find((x) => x.id === id || x.id.startsWith(id));
     if (!m) return false;
     rmSync(this.pathFor(m), { force: true });
     this.dyn.drop(m.id);
@@ -851,12 +879,21 @@ export class Store {
         const m = this.load(h.path, h.project);
         if (m) byId.set(m.id, m);
       }
-      const wanted = [...new Set(
-        hits.map((h) => h.supersededBy).filter((id): id is string => !!id && !byId.has(id)),
-      )];
-      for (const row of index.locate(wanted)) {
-        const m = this.load(row.path, row.project);
-        if (m) byId.set(m.id, m);
+      // Chains, not single hops: an episode is superseded by a claim, and that
+      // claim can later be superseded by a revision of it. Loading only the
+      // immediate successor would leave the ranker looking at a cold claim and
+      // dropping the episode's route to the live one. Bounded because a cycle in
+      // the data must not become an infinite loop here.
+      for (let hop = 0; hop < 8; hop++) {
+        const wanted = [...new Set(
+          [...hits.map((h) => h.supersededBy), ...[...byId.values()].map((m) => m.supersededBy)]
+            .filter((id): id is string => !!id && !byId.has(id)),
+        )];
+        if (!wanted.length) break;
+        for (const row of index.locate(wanted)) {
+          const m = this.load(row.path, row.project);
+          if (m) byId.set(m.id, m);
+        }
       }
       return rank(hits, byId, paths, limit);
     } catch (e) {

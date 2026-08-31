@@ -20,6 +20,14 @@
  * checked mechanically afterwards, because it is the defect the eval actually
  * found and a nondeterministic gate on a destructive operation is how
  * consolidation starts failing silently.
+ *
+ * Existing claims are shown too, and may be revised. Without that this ran
+ * blind: it saw only new episodes, so the same lesson learned in two sessions
+ * was stored twice and nothing could ever notice. Measured in lethe's own store
+ * -- "Compaction silently fails when the distiller is unavailable" and "All
+ * lethe.log errors are distil failed: no model" are one lesson, written 28 hours
+ * apart from different episodes, both live. Detecting that lexically is not an
+ * option: the header above is the record of that approach already failing.
  */
 
 import type { Memory } from "./store.js";
@@ -38,9 +46,20 @@ import { log } from "./log.js";
  */
 export const MAX_REPLAY = 24;
 
+/**
+ * Existing claims offered for revision in one pass.
+ *
+ * Bounded for the same reason as MAX_REPLAY: a prompt nobody attends to is worse
+ * than a short one. Chosen by salience, so a duplicate outside the window waits
+ * for a run where it matters more -- which is a slower merge, not a lost one.
+ */
+export const MAX_REVISABLE = 12;
+
 export interface DraftClaim {
   /** 1-based indices into the episodes given to the model. */
   sources: number[];
+  /** 1-based indices into the existing claims offered for revision. */
+  supersedes: number[];
   title: string;
   body: string;
 }
@@ -76,8 +95,41 @@ sources: 1, 4
 title: one line, the rule itself
 body: one to three lines, keeping every command and path verbatim
 END
+`;
 
-Episodes:
+/**
+ * Appended only when there are claims to offer, so a model with nothing to
+ * revise is never shown a field it cannot use.
+ */
+const REVISION = `
+Lessons already recorded are listed below as C1, C2 and so on. You are seeing
+them because this used to run blind -- it saw only new episodes, so the same
+lesson learned twice was stored twice, and nothing could notice.
+
+If an episode is about the same underlying thing as one of those claims, do not
+write a second claim beside it. Write the claim you would have written anyway and
+name what it replaces:
+
+CLAIM
+supersedes: C1
+sources: 3
+title: one line, the rule itself
+body: one to three lines
+END
+
+Rules for revising:
+- A revision REPLACES the claim it supersedes. Keep everything in it that is
+  still true and add what the episodes taught; anything you leave out is lost.
+- Reproduce the old claim's commands, paths and error strings exactly as well.
+  The revision is rejected for dropping them, exactly as it is for episodes.
+- Supersede more than one claim only when they are the same lesson stated twice.
+  That case is worth catching: it is how duplicates get collapsed.
+- Never supersede a claim for being on a related topic. In doubt, leave it and
+  write a separate claim.
+- Every claim still needs at least one episode in sources. Do not rewrite a
+  claim you have nothing new to add to.
+
+Existing claims:
 `;
 
 /** Tolerant parser: CLI models drift on whitespace, case and stray prose. */
@@ -96,6 +148,15 @@ export function parseClaims(reply: string): DraftClaim[] {
       .filter((n) => Number.isFinite(n) && n > 0);
     if (!sources.length) continue;
 
+    // `supersedes: C1, C2`. Optional, and so is the C -- models drop it about as
+    // often as they keep it.
+    const supersedesLine = /^\s*supersedes\s*:\s*(.+)$/im.exec(block);
+    const supersedes = [...new Set(
+      [...(supersedesLine?.[1] ?? "").matchAll(/\d+/g)]
+        .map((m) => Number(m[0]))
+        .filter((n) => Number.isFinite(n) && n > 0),
+    )];
+
     // Body runs from the body: label to the end of the block, so it may span
     // lines. A missing body is not fatal -- the title alone is a usable claim.
     const bodyStart = /^\s*body\s*:\s*/im.exec(block);
@@ -105,6 +166,7 @@ export function parseClaims(reply: string): DraftClaim[] {
 
     out.push({
       sources: [...new Set(sources)],
+      supersedes,
       title: titleLine[1].replace(/^#+\s*/, "").trim(),
       body,
     });
@@ -115,6 +177,8 @@ export function parseClaims(reply: string): DraftClaim[] {
 export interface Consolidation {
   claim: DraftClaim;
   sources: Memory[];
+  /** Existing claims this one replaces. They go cold, exactly as episodes do. */
+  revises: Memory[];
 }
 
 export interface ConsolidateResult {
@@ -128,6 +192,7 @@ export interface ConsolidateResult {
 export async function consolidate(
   episodes: Memory[],
   distil: Distiller,
+  claims: Memory[] = [],
 ): Promise<ConsolidateResult> {
   const empty: ConsolidateResult = { accepted: [], rejected: [], untouched: episodes };
   if (!episodes.length) return empty;
@@ -143,9 +208,22 @@ export async function consolidate(
     .map((m, i) => `${i + 1}. ${m.title}${m.body ? `\n   ${m.body.replace(/\n/g, "\n   ")}` : ""}`)
     .join("\n\n");
 
+  // Most salient first, then most recently touched, mirroring replay. A claim
+  // outside the window is not offered this run and keeps its duplicate for now.
+  const revisable = [...claims]
+    .sort((a, b) => b.salience - a.salience || b.updated.localeCompare(a.updated))
+    .slice(0, MAX_REVISABLE);
+  const numberedClaims = revisable
+    .map((m, i) => `C${i + 1}. ${m.title}${m.body ? `\n    ${m.body.replace(/\n/g, "\n    ")}` : ""}`)
+    .join("\n\n");
+
+  const prompt = revisable.length
+    ? `${PROMPT}${REVISION}\n${numberedClaims}\n\nEpisodes:\n\n${numbered}`
+    : `${PROMPT}\nEpisodes:\n\n${numbered}`;
+
   let reply: string;
   try {
-    reply = (await distil(PROMPT + numbered)).trim();
+    reply = (await distil(prompt)).trim();
   } catch (err) {
     log("error", `distil failed: ${err instanceof Error ? err.message : String(err)}`);
     return empty; // the model failed; leave every episode alone
@@ -164,6 +242,7 @@ export async function consolidate(
   const accepted: Consolidation[] = [];
   const rejected: ConsolidateResult["rejected"] = [];
   const consumed = new Set<string>();
+  const revised = new Set<string>();
 
   for (const claim of drafts) {
     const sources = claim.sources
@@ -172,17 +251,32 @@ export async function consolidate(
       // A model citing the same episode in two claims would consume it twice
       // and leave the second claim's provenance pointing at a cold trace.
       .filter((m) => !consumed.has(m.id));
+    // Still requires new evidence: a claim with no episode behind it is a
+    // rewrite for its own sake, and the evidence gate would have nothing to
+    // check it against.
     if (!sources.length) continue;
     if (!claim.title) continue;
 
+    const revises = claim.supersedes
+      .map((n) => revisable[n - 1])
+      .filter((m): m is Memory => Boolean(m))
+      // Two revisions of one claim would leave the loser's successor pointing at
+      // a memory that is already cold.
+      .filter((m) => !revised.has(m.id));
+
+    // A superseded claim is consumed exactly as an episode is, so it goes
+    // through the same gate: replace a claim and you must keep at least one of
+    // its retrievable strings. Otherwise "revising" is how a claim's commands
+    // quietly disappear -- the failure the gate was built for, one level up.
+    const eaten = [...sources, ...revises];
     const text = `${claim.title}\n${claim.body}`;
-    const orphaned = unrepresentedSources(sources.map((m) => m.body), text);
+    const orphaned = unrepresentedSources(eaten.map((m) => m.body), text);
     if (orphaned.length) {
       // Name what each orphaned source lost, so a rejection is diagnosable
       // rather than just a count. A silent rejection is indistinguishable from
       // compaction being broken.
       const missing = orphaned.flatMap((i) =>
-        droppedFrom(sources[i]!.body, text).slice(0, 2).map((e) => `${sources[i]!.title}: ${e}`),
+        droppedFrom(eaten[i]!.body, text).slice(0, 2).map((e) => `${eaten[i]!.title}: ${e}`),
       );
       rejected.push({ claim, missing });
       log("compact",
@@ -191,7 +285,11 @@ export async function consolidate(
     }
 
     for (const m of sources) consumed.add(m.id);
-    accepted.push({ claim, sources });
+    for (const m of revises) revised.add(m.id);
+    if (revises.length) {
+      log("compact", `"${claim.title}" revises ${revises.length} existing claim(s)`);
+    }
+    accepted.push({ claim, sources, revises });
   }
 
   return {

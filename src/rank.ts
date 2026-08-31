@@ -14,7 +14,7 @@
  * claim.
  */
 
-import type { Memory } from "./store.js";
+import { follow, type Memory } from "./store.js";
 import type { Hit } from "./index-db.js";
 
 /**
@@ -51,11 +51,16 @@ export function rank(
     const matched = byId.get(hit.id);
     if (!matched) continue;
 
-    // Resolve forward. An episode whose claim has been evicted is dropped:
-    // it was kept as a route to something, and returning the raw trace instead
-    // would undo the consolidation the user already paid for.
-    const target = hit.supersededBy ? byId.get(hit.supersededBy) : matched;
-    if (!target || target.supersededBy) continue;
+    // Resolve forward along the whole chain, not one hop. An episode is
+    // superseded by the claim distilled from it, and that claim can later be
+    // superseded by a revision of itself -- stopping after one step would land
+    // on a cold claim and drop the episode's route to the live one.
+    //
+    // An episode whose claim has been evicted is still dropped: it was kept as a
+    // route to something, and returning the raw trace instead would undo the
+    // consolidation the user already paid for.
+    const target = follow(matched, byId);
+    if (target.supersededBy) continue; // the chain ends somewhere we cannot load
 
     const score = hit.relevance * dynamicsMultiplier(target, paths);
     const existing = best.get(target.id);

@@ -101,3 +101,34 @@ test("respects the limit", () => {
   }
   assert.equal(rank(hits, byId, [], 3).length, 3);
 });
+
+test("a two-hop chain resolves to the live claim, not the cold middle", () => {
+  // An episode is superseded by the claim distilled from it, and that claim is
+  // later superseded by a revision of itself. Resolving one hop landed on the
+  // cold claim and dropped the episode's route to the live one entirely.
+  const byId = new Map<string, Memory>([
+    ["ep-1", mem({ id: "ep-1", kind: "episode", supersededBy: "claim-1" })],
+    ["claim-1", mem({ id: "claim-1", supersededBy: "claim-2" })],
+    ["claim-2", mem({ id: "claim-2" })],
+  ]);
+  const out = rank([hit("ep-1", 5, "claim-1")], byId, [], 5);
+  assert.deepEqual(out.map((m) => m.id), ["claim-2"]);
+});
+
+test("a chain whose end cannot be loaded drops rather than returning the trace", () => {
+  const byId = new Map<string, Memory>([
+    ["ep-1", mem({ id: "ep-1", kind: "episode", supersededBy: "claim-1" })],
+    ["claim-1", mem({ id: "claim-1", supersededBy: "evicted" })],
+  ]);
+  // Returning the raw episode here would undo the consolidation already paid for.
+  assert.deepEqual(rank([hit("ep-1", 5, "claim-1")], byId, [], 5), []);
+});
+
+test("a cycle in the chain terminates instead of hanging", () => {
+  const byId = new Map<string, Memory>([
+    ["a", mem({ id: "a", supersededBy: "b" })],
+    ["b", mem({ id: "b", supersededBy: "a" })],
+  ]);
+  // Should never occur in the data; must not be an infinite loop if it does.
+  assert.deepEqual(rank([hit("a", 5, "b")], byId, [], 5), []);
+});

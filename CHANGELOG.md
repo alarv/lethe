@@ -30,6 +30,25 @@ The release workflow refuses to publish a version with no section here.
 
 ### Changed
 
+- **Consolidation can revise an existing claim instead of writing a second one beside
+  it.** It used to see only unconsolidated episodes, so a lesson learned in two sessions
+  weeks apart was stored twice and nothing could ever notice. lethe's own store had the
+  pair: "Compaction silently fails when the distiller is unavailable" and "All lethe.log
+  errors are `distil failed: no model`" — one lesson, recorded 28 hours apart from
+  different episodes, both live.
+
+  Live claims are now listed for the distiller as `C1`, `C2`, … and a claim may carry a
+  `supersedes:` line. Four rules keep it from becoming churn: a revision needs at least one
+  new episode; the evidence gate applies to the claim being replaced as well, so revising
+  cannot quietly drop its commands; a claim is replaced at most once per run; and patterns
+  are never offered, being the promoted survivors. A replaced claim goes cold on the same
+  terms as an episode — the file stays, so a bad revision is recoverable and the old
+  wording remains a route to the new claim.
+
+  Detecting duplicates lexically was not an option: `consolidate.ts` already records that
+  measurement — 13 hand-labelled pairs, Jaccard 77%, TF-IDF cosine 85%, and unrelated pairs
+  scoring *higher* than genuinely related ones. The judgement is semantic.
+
 - **Scopes are gone. Where a memory goes is derived from what it is.** Claims and
   patterns are written to `<repo>/.lethe/memory/`, beside the code they describe;
   episodes to `~/.lethe/projects/<key>/`, never into a repository. Outside a git repo,
@@ -148,6 +167,18 @@ The release workflow refuses to publish a version with no section here.
   directory while it has anything in it.
 
 ### Fixed
+
+- **An id now resolves to the memory it currently means.** `store.get` returned the direct
+  match, so an id whose memory had been superseded resolved to the cold copy — an agent
+  that recalled a claim and then had it revised would `confirm` a dead memory, or `correct`
+  it and fork the chain. It now walks supersession forward. `forget` deliberately does not:
+  asked to delete a memory, deleting its replacement instead is the worst available reading
+  of the request.
+- **Retrieval follows a chain of supersessions, not one hop.** `rank` resolved a hit
+  forward exactly once, which was enough while only episodes were ever superseded. Once a
+  claim can be revised, an episode → claim → revised-claim chain landed on the cold middle
+  and the episode's route to the live claim was dropped entirely — silently losing the
+  pattern completion that consolidation depends on. Cycles terminate rather than hang.
 
 - **`lethe init` no longer writes a `.gitignore` line for `.lethe/episodes/`.** That
   directory has never existed — episodes live in `~/.lethe/projects/<key>/` — so the line
