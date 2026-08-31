@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { claimSharing, configSources, ignoreInGit, staleRootIgnore } from "./config.js";
+import { SCOPE_NAMES, claimSharing, configSources, ignoreInGit, isScope, staleRootIgnore } from "./config.js";
 
 /** A real repository, because claimSharing asks git rather than parsing .gitignore. */
 function withRepo(fn: (root: string) => void): void {
@@ -238,6 +238,39 @@ test("a config file that does not exist is reported, not hidden", () => {
       assert.equal(sources.length, 2);
       assert.ok(sources.every((s) => !s.exists));
       assert.ok(sources.every((s) => s.scope === undefined));
+    });
+  } finally {
+    if (previous === undefined) delete process.env.LETHE_HOME;
+    else process.env.LETHE_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// -------------------------------------------------------------- isScope
+
+test("isScope accepts the three scopes and nothing else", () => {
+  for (const s of SCOPE_NAMES) assert.ok(isScope(s), `${s} must be a scope`);
+  assert.equal(SCOPE_NAMES.length, 3);
+  // `lethe init --scope=banana` used to write this to config.json, report
+  // success, and then quietly resolve to local.
+  for (const bad of ["banana", "Team", "team ", "", "team --private", undefined, null, 3]) {
+    assert.equal(isScope(bad), false, `${String(bad)} must not be a scope`);
+  }
+});
+
+test("an unreadable scope in a config file falls back rather than throwing", () => {
+  const home = mkdtempSync(join(tmpdir(), "lethe-test-home-"));
+  const previous = process.env.LETHE_HOME;
+  process.env.LETHE_HOME = home;
+  try {
+    withRepo((root) => {
+      mkdirSync(join(root, ".lethe"), { recursive: true });
+      writeFileSync(join(root, ".lethe", "config.json"), JSON.stringify({ scope: "banana" }));
+      // configSources reports it verbatim so doctor can point at the file;
+      // deciding it is junk is the caller's job.
+      const sources = configSources(root);
+      assert.equal(sources[1]!.scope, "banana");
+      assert.equal(isScope(sources[1]!.scope), false);
     });
   } finally {
     if (previous === undefined) delete process.env.LETHE_HOME;

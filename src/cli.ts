@@ -16,7 +16,7 @@ function pressureThreshold(): number {
 }
 import { promptHook } from "./hook.js";
 import { PLACEMENTS, choose } from "./prompt.js";
-import { claimSharing, configSources, defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, staleRootIgnore, writeConfig } from "./config.js";
+import { SCOPE_NAMES, claimSharing, configSources, defaultScope, globalConfigPath, ignoreInGit, isScope, loadConfig, projectConfigPath, staleRootIgnore, writeConfig } from "./config.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -193,10 +193,20 @@ whether this is what moved adoption.`);
       // project file can both exist and say different things.
       const sources = configSources().filter((s) => s.exists);
       const winner = [...sources].reverse().find((s) => s.scope);
-      console.log(`${ok(true)} scope      ${defaultScope()}${winner ? "" : " (built-in default; no config file)"}`);
+      const junk = sources.filter((s) => s.scope !== undefined && !isScope(s.scope));
+      console.log(`${ok(!junk.length)} scope      ${defaultScope()}${winner ? "" : " (built-in default; no config file)"}`);
       for (const s of sources) {
         const mark = s === winner ? "<-" : "  ";
-        console.log(`     config     ${s.path}  scope=${s.scope ?? "unset"} ${mark}`);
+        const bad = s.scope !== undefined && !isScope(s.scope) ? "  (not a scope, ignored)" : "";
+        console.log(`     config     ${s.path}  scope=${s.scope ?? "unset"} ${mark}${bad}`);
+      }
+      if (junk.length) {
+        problems.push(
+          "A config file sets a scope that is not one, so it is ignored and the\n" +
+          `  scope in effect is ${defaultScope()} rather than what the file says. Valid\n` +
+          `  scopes are ${SCOPE_NAMES.join(", ")}:\n  ` +
+          junk.map((s) => `${s.path}  scope=${s.scope}`).join("\n  "),
+        );
       }
 
       // Scope decides where claims are written; .gitignore decides who can
@@ -353,7 +363,15 @@ whether this is what moved adoption.`);
     }
 
     case "init": {
-      const explicit = flag(rest, "scope") as Scope | undefined;
+      const given = flag(rest, "scope");
+      // Refuse rather than write a value nothing will read. Accepting it wrote
+      // config.json, reported success, and then silently resolved to `local`.
+      if (given !== undefined && !isScope(given)) {
+        console.error(`not a scope: ${given}`);
+        console.error(`valid scopes are ${SCOPE_NAMES.join(", ")}`);
+        process.exit(1);
+      }
+      const explicit = given as Scope | undefined;
       const root = findProjectRoot();
       let isGlobal = rest.includes("--global");
       let want: Scope;

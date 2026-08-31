@@ -25,6 +25,22 @@ export interface Config {
 
 const SCOPES = new Set<Scope>(["local", "team", "personal"]);
 
+/** Every valid scope, in the order they are worth explaining. */
+export const SCOPE_NAMES: readonly Scope[] = ["local", "team", "personal"];
+
+/**
+ * Guard for anything that claims to be a scope.
+ *
+ * Exported because an unrecognised value used to be accepted in silence:
+ * `lethe init --scope=banana` wrote `"banana"` to config.json, said "default
+ * scope banana", and then resolved to `local` -- so the setting appeared to
+ * take and did not. That is the exact failure the config rows in `lethe doctor`
+ * exist to answer, and it was pointing at a file it could not read.
+ */
+export function isScope(value: unknown): value is Scope {
+  return typeof value === "string" && SCOPES.has(value as Scope);
+}
+
 function read(path: string): Config {
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as Config;

@@ -29,6 +29,12 @@ The release workflow refuses to publish a version with no section here.
 
 ### Fixed
 
+- **`lethe init --scope=<nonsense>` is now refused.** It used to write the value to
+  `config.json`, print "default scope banana", and then silently resolve to `local` — the
+  setting appeared to take and did not, which is the exact failure the config rows in
+  `lethe doctor` were added to answer. Doctor now also marks a config file whose scope is
+  not a scope, instead of pointing at it as the winner.
+
 - **`lethe init` no longer writes a `.gitignore` line for `.lethe/episodes/`.** That
   directory has never existed — episodes live in `~/.lethe/projects/<key>/` whatever the
   scope says — so the line protected nothing while telling the reader, under the heading
