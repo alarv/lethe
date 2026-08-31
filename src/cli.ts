@@ -24,8 +24,8 @@ import { join } from "node:path";
 import { LOG_PATH, buildStamp, logging, tail } from "./log.js";
 import { human, prune, survey } from "./maintain.js";
 import { describeDistiller, resolveDistiller } from "./distil.js";
-import { facts, seed, writeWatermark } from "./learn.js";
-import { spinning, task } from "./progress.js";
+import { seeded } from "./learn.js";
+import { spinning } from "./progress.js";
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
 
@@ -47,7 +47,7 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
        [--share] [--private]   answer up front instead of being asked
        [--global]              set the default for projects that have not chosen
        [--debug|--no-debug]    record activity to ~/.lethe/lethe.log (off by default)
-  lethe learn [--dry-run]      seed memory from this repo's own conventions
+  lethe learn [--reset]        what has been seeded from this repo / drop it
   lethe projects               every project with stored memory
   lethe where                  show where memory is stored
   lethe compact [--dry-run]    consolidate, promote, decay
@@ -68,42 +68,37 @@ function flag(args: string[], name: string): string | undefined {
 }
 
 /**
- * Seed memory from the repo, reported the same way from `init` and `learn`.
+ * Report what has been seeded, and point at the thing that does the seeding.
  *
- * Shared so setup and the standalone command cannot drift into describing the
- * same operation differently -- the whole point of the seed is that a user
- * understands what got written without going to look.
+ * There is no model here on purpose. Seeding happens through the `learn` MCP
+ * tool, driven by the agent already running in the session -- it has the repo
+ * open, file tools in hand, and knows every ecosystem lethe would otherwise have
+ * to carry code for. lethe does not need a model; it needs a client, and it has
+ * one. So this command inspects and explains rather than doing the work.
  */
-function reportSeed(store: Store, root: string, dryRun: boolean): void {
-  const found = facts(root);
-  if (!found.length) {
-    console.log("memory    nothing recognisable to seed from -- no package.json, Makefile,");
-    console.log("          pyproject.toml or CI workflow found. Memory starts empty and");
-    console.log("          fills up as work happens.");
+function reportLearned(store: Store): void {
+  const claims = seeded(store);
+  if (!claims.length) {
+    console.log("memory    nothing seeded from this repo yet.");
+    console.log("");
+    console.log("          Seeding runs in your session, not here: ask your agent to call");
+    console.log("          lethe's `learn` tool. It reads the repo with its own tools and");
+    console.log("          hands back claims, which are checked against the files they cite");
+    console.log("          before anything is stored.");
     return;
   }
 
-  const t = task("reading this repo", { total: found.length });
-  const report = seed(store, root, { dryRun, onFact: () => t.step() });
-  t.done();
-
-  const wrote = report.written + report.revised;
-  const verb = dryRun ? "would seed" : "seeded";
-  console.log(`memory    ${verb} ${wrote} claim(s) from ${report.sources.join(", ")}` +
-    `${report.unchanged ? `, ${report.unchanged} already current` : ""}`);
-  console.log("          how to build, test and check here -- the things an agent otherwise");
-  console.log("          rediscovers by reading three files. Weak on purpose: a seed nobody");
-  console.log("          recalls decays out in about two months, so a wrong guess expires.");
-
-  if (!dryRun) {
-    writeWatermark(root, {
-      at: new Date().toISOString(),
-      seeded: wrote,
-      // History distillation needs a model and is not built yet; recording null
-      // rather than a commit keeps the field honest about what has been read.
-      historyThrough: null,
-    });
+  console.log(`memory    ${claims.length} seeded claim(s):`);
+  for (const m of claims) {
+    console.log(`  [${m.id.slice(0, 8)}] ${m.title}`);
+    console.log(`             strength ${m.strength.toFixed(2)}` +
+      `${m.confirmedBy.length ? `, confirmed by ${m.confirmedBy.length}` : ", never confirmed"}` +
+      `${m.files.length ? ` -- from ${m.files.join(", ")}` : ""}`);
   }
+  console.log("");
+  console.log("Weak on purpose: a seed nobody recalls decays out in about two months, so a");
+  console.log("wrong guess expires. Ask your agent to call `learn` again to refresh these --");
+  console.log("each has a stable key, so it revises in place rather than duplicating.");
 }
 
 async function main(): Promise<void> {
@@ -536,13 +531,24 @@ whether this is what moved adoption.`);
         for (const l of staleRules) console.log(`  ${l.trim()}`);
       }
 
-      // Seeding runs unconditionally, because it needs no model, no network and
-      // no permission beyond the decision just made -- so there is nothing to
-      // ask about and nothing that can fail. It is also the whole reason `init`
-      // is worth running: without it lethe helps on day 30 and not day 1, and an
-      // empty store teaches the agent to stop calling recall.
+      // Init invites rather than seeds. Seeding costs a model call now, which
+      // means real tokens on someone's account and a minute of waiting -- not
+      // something setup should do unannounced, and not something that can run in
+      // CI where init must stay instant and headless.
       console.log("");
-      reportSeed(store, root!, false);
+      const already = seeded(store);
+      if (already.length) {
+        console.log(`memory    ${already.length} claim(s) already seeded from this repo.`);
+        console.log("          `lethe learn` lists them and how strong they still are.");
+      } else {
+        console.log("memory    empty. An empty store does not fail neutrally -- it teaches the");
+        console.log("          agent that recall does not pay, and by the third session it has");
+        console.log("          stopped asking. Seed it from what this repo already says:");
+        console.log("");
+        console.log("            ask your agent to call lethe's `learn` tool -- it reads the");
+        console.log("            repo with its own tools and hands back claims, checked");
+        console.log("            against the files they cite before anything is stored.");
+      }
 
       console.log("\n`lethe doctor` will tell you if git ends up disagreeing with this.");
       return;
@@ -554,12 +560,19 @@ whether this is what moved adoption.`);
         console.log("not a git repository, so there is no repo to learn from.");
         return;
       }
-      const dryRun = rest.includes("--dry-run");
       console.log(`repo      ${root}`);
-      reportSeed(store, root, dryRun);
-      console.log("");
-      console.log("re-runnable: each fact has a stable key, so this revises what it wrote");
-      console.log("last time instead of writing a second copy beside it.");
+      if (rest.includes("--reset")) {
+        // Seed keys are chosen by whoever produced the fact, so a claim seeded
+        // by an older version cannot be revised by a newer one -- the subjects
+        // are the same but the keys are not, and the two would sit side by side
+        // until decay removed the stale one months later. This is the way out.
+        const stale = seeded(store);
+        for (const m of stale) store.remove(m.id);
+        console.log(`memory    removed ${stale.length} seeded claim(s); earned memories untouched.`);
+        console.log("          ask your agent to call `learn` to seed again.");
+        return;
+      }
+      reportLearned(store);
       return;
     }
 

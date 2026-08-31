@@ -15,6 +15,7 @@ import { Store, author, claimDir, episodeDir, type Memory } from "./store.js";
 import { compact, type Distiller } from "./compact.js";
 import { buildStamp, log } from "./log.js";
 import { logResolved, resolveDistiller } from "./distil.js";
+import { LEARN_INSTRUCTIONS, gate, seed, seeded, writeWatermark } from "./learn.js";
 
 function render(m: Memory): string {
   const from = m.fromProject ? ` — from ${m.fromProject}` : "";
@@ -207,6 +208,79 @@ export function createServer(cwd = process.cwd()): McpServer {
       log("note", m.title, { id: m.id.slice(0, 8), kind: m.kind });
       relievePressure();
       return { content: [{ type: "text", text: `recorded [${m.id.slice(0, 8)}] ${m.title}` }] };
+    },
+  );
+
+  server.tool(
+    "learn",
+    "Seed this project's memory from what the repository already says about itself -- " +
+      "how to install, build, test and run it, what CI does, which services the tests " +
+      "expect. Call this with no arguments in a project whose memory is empty, or when " +
+      "recall returns nothing: you get instructions, you read the repo with your own " +
+      "tools, then you call learn again with the facts. Seeded claims start weak and " +
+      "decay unless they prove useful, so it is safe to seed what the repo states -- but " +
+      "do NOT summarise the source code, which is re-derivable and crowds out real " +
+      "lessons. Facts citing files that do not exist, quoting values not in those files, " +
+      "or naming a publish or deploy command are rejected.",
+    {
+      facts: z.array(z.object({
+        key: z.string().describe(
+          "short stable slug for the SUBJECT -- install, test, runtime, services, ci. " +
+          "The same subject must get the same key every run: that is what revises a " +
+          "claim rather than writing a second one beside it.",
+        ),
+        title: z.string().describe("one line, the rule itself, not a description of the repo"),
+        body: z.string().describe("one to four lines; commands, paths and versions exactly as written"),
+        files: z.array(z.string()).describe("repo-relative paths this came from"),
+        quoted: z.array(z.string()).default([]).describe(
+          "strings copied VERBATIM from those files. Each is checked against the file " +
+          "and the fact is discarded if absent, so quote what is really there rather " +
+          "than a command you inferred.",
+        ),
+        salience: z.number().min(0).max(1).default(0.6),
+      })).default([]).describe("omit on the first call to receive instructions"),
+    },
+    async ({ facts }) => {
+      await ensureBound();
+
+      // Two phases, one tool. Called empty it is a request for instructions;
+      // called with facts it is the write. A second tool would let an agent
+      // discover the writer without ever seeing the rules it has to satisfy.
+      if (!facts.length) {
+        const already = seeded(store);
+        const preamble = already.length
+          ? `This project already has ${already.length} seeded claim(s): ` +
+            `${already.map((m) => m.title).join("; ")}.\nRe-seeding revises them in place, ` +
+            "so use the same key for the same subject.\n\n"
+          : "";
+        log("learn", "instructions requested", { seeded: already.length });
+        return { content: [{ type: "text", text: preamble + LEARN_INSTRUCTIONS }] };
+      }
+
+      const { kept, rejected } = gate(facts, workspace());
+      const report = seed(store, kept);
+      const wrote = report.written + report.revised;
+      if (wrote) {
+        writeWatermark(workspace(), { at: new Date().toISOString(), seeded: wrote });
+      }
+      log("learn", "seeded from the repository", {
+        given: facts.length,
+        kept: kept.length,
+        rejected: rejected.length,
+      });
+
+      // Rejections are returned, not swallowed: the agent can fix a bad citation
+      // and call again, which it cannot do if the failure is silent.
+      const lines = [
+        `seeded ${report.written} new, revised ${report.revised}, ` +
+        `${report.unchanged} already current.`,
+      ];
+      if (rejected.length) {
+        lines.push("", `rejected ${rejected.length}:`);
+        for (const r of rejected) lines.push(`  ${r.fact.title}\n    -> ${r.reason}`);
+        lines.push("", "Fix the citation and call learn again with just those facts.");
+      }
+      return { content: [{ type: "text", text: lines.join("\n") }] };
     },
   );
 

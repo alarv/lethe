@@ -116,6 +116,7 @@ export type Event =
   | "correct"
   | "forget"
   | "compact"
+  | "learn"
   | "index"
   | "sampling"
   | "error";

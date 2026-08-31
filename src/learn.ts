@@ -1,5 +1,5 @@
 /**
- * Seeding memory from the repository itself, so lethe is useful on day one.
+ * Seeding memory from the repository, so lethe is useful on day one.
  *
  * The cold-start problem is not cosmetic. An empty store does not merely fail to
  * help -- it teaches the agent that `recall` does not pay. First session it
@@ -7,35 +7,46 @@
  * learned to stop asking. Adoption measured in lethe's own store is consistent
  * with exactly that: 12% of sessions called `recall`, 18% called `note`.
  *
- * WHAT THIS DELIBERATELY DOES NOT DO: walk `src/` and write claims describing
- * the architecture. That produces a stale mirror of the code -- confidently
- * wrong after the first refactor, re-derivable by simply reading the file, and
- * actively harmful to retrieval, because `recall` returns eight hits and forty
- * architecture summaries push out the one hard-won gotcha. The rule the whole
- * project runs on is that a memory must not be trivially re-derivable from the
- * code, and a summary of the code is the purest violation of it.
+ * THE AGENT IN THE SESSION DOES THE READING. `learn` is an MCP tool, and that is
+ * the whole design. The host already has a capable model with the repository
+ * open and file tools in its hands; it costs nothing extra, it needs no key, and
+ * it knows every ecosystem lethe would otherwise have to learn about. lethe does
+ * not need a model. It needs a client, and it already has one.
  *
- * So this tier extracts only "how to work here" -- the build, test and check
- * commands, the runtime floor, what CI does before it runs the tests. Those are
- * facts an agent otherwise rediscovers by reading three files, and they are
- * scattered across `package.json`, a lockfile, a workflow and a README
- * paragraph rather than stated anywhere once.
+ * Two rejected designs, both of which shipped briefly and were wrong:
  *
- * Two properties make it safe to seed generously:
+ *   1. HAND-WRITTEN EXTRACTORS. npm scripts, then a Makefile, then pyproject and
+ *      pytest keys, then uv and poetry and requirements, then Taskfile, then
+ *      workflow services -- with R, Go and Java queued behind them. A language
+ *      matrix maintained inside a memory tool forever, reimplementing what the
+ *      model already knows.
  *
- *   1. Every fact must cite a file and be checkable against it. `cited()` is a
- *      mechanical gate, not a prompt instruction -- an extractor that invents a
- *      command is rejected before it reaches the store. This tier uses no model
- *      at all, so it also cannot fail for want of one.
+ *   2. HIRING A MODEL. Resolving a distiller and pasting a selection of files
+ *      into a prompt. That needed a second, blinder heuristic to choose which
+ *      files to paste, sent repository contents somewhere they did not need to
+ *      go, and used a weaker model than the one already running in the session.
  *
- *   2. Seeded claims enter WEAK. They were not earned by experience, so they
- *      start below a claim distilled from real episodes, and ordinary decay
- *      culls the ones that never get recalled or confirmed. Being wrong is
- *      therefore self-correcting, which is what earns the right to guess.
+ * So this module holds no ecosystem knowledge and no file-selection rule. What
+ * it does hold is the three things that stay lethe's job:
+ *
+ *   - A MECHANICAL GATE. `gate()` requires every value the agent declares as
+ *     quoted to appear verbatim in a file it cited, refuses facts citing files
+ *     that do not exist, and refuses outward-facing commands. A nondeterministic
+ *     producer needs a deterministic check -- the same posture as the evidence
+ *     gate on consolidation, and for the same reason: an instruction is a
+ *     request, this is a check.
+ *
+ *   - WEAK SEEDING. Seeded claims were not earned by experience, so they enter
+ *     below a claim distilled from real episodes and ordinary decay culls the
+ *     ones never recalled or confirmed. Being wrong is self-correcting, which is
+ *     what earns the right to seed a guess at all.
+ *
+ *   - IDEMPOTENCY. A stable key per fact, so re-running revises rather than
+ *     duplicating.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Memory, Store } from "./store.js";
 
 /**
@@ -57,21 +68,78 @@ export interface Fact {
    * Stable across runs, so re-seeding revises the existing claim instead of
    * writing a second one beside it. This matters more than the watermark does:
    * a teammate cloning a repo with committed claims has no watermark of their
-   * own, and without a key their first `lethe init` would duplicate the lot.
+   * own, and without a key their first run would duplicate the lot.
    */
   key: string;
   title: string;
   body: string;
   /** Repo-relative paths this was read out of. */
   files: string[];
-  /** Strings claimed to have come verbatim from `files`; checked by `cited()`. */
+  /** Strings the agent claims came verbatim from `files`; checked by `gate()`. */
   quoted: string[];
   salience: number;
 }
 
-// ------------------------------------------------------------------ reading
+// -------------------------------------------------------------- instructions
 
-/** Reads a repo-relative file, or null. Missing files are the common case. */
+/**
+ * What the tool says when asked to learn with nothing to write yet.
+ *
+ * Returned to the agent rather than sent to a model: it is a brief for work the
+ * caller is about to do with its own file tools, which is why it can say "read
+ * it yourself" at all.
+ */
+export const LEARN_INSTRUCTIONS = `Seed this project's memory from what the repository already says about itself.
+Nothing has been read for you -- read it yourself, with your own tools, then call
+\`learn\` again with a \`facts\` array.
+
+WHAT TO LOOK AT: the manifest and lockfile, the task runner or scripts, CI
+config, and any CONTRIBUTING or AGENTS file. Work out the language and tooling
+from what you find; no assumption has been made about any of it.
+
+WHAT IS WORTH RECORDING -- how to work here, not what the code is:
+- How to install dependencies, and which file is authoritative when several
+  disagree (a lockfile beats a requirements list; say so if both exist).
+- How to build, test, lint and typecheck. The real command, not an approximation.
+- The runtime or language version the repo requires.
+- Services the tests expect to be running, and what the failure looks like when
+  they are not.
+- Anything CI does that a local run does not, since CI is the actual contract.
+- A convention stated in CONTRIBUTING or AGENTS that the code would not reveal.
+
+WHAT WILL BE REJECTED:
+- Any description of what the source code does or how it is structured. That is a
+  stale mirror of the code -- wrong after the first refactor, re-derivable by
+  reading the file, and it crowds retrieval out of the hard-won lessons. recall
+  returns eight hits; do not spend them on a tour of the codebase.
+- Anything that publishes, deploys, pushes or releases. Those steps are real and
+  completely wrong to run locally.
+- What the project is for. A future agent can read the README.
+- A guess. If the repo does not say it, leave it out.
+
+EACH FACT:
+  key      short stable slug for the SUBJECT -- "install", "test", "runtime",
+           "services", "ci", "conventions". Re-running must produce the same key
+           for the same subject: that is what revises a claim instead of writing
+           a second one next to it. One fact per key.
+  title    one line, the rule itself. "Install with \`uv sync\`; uv.lock is
+           authoritative" beats "this project uses Python".
+  body     one to four lines. Commands, paths and versions EXACTLY as written.
+  files    repo-relative paths the fact came from.
+  quoted   one or more strings you COPIED VERBATIM from those files. Each is
+           checked against the file and the fact is discarded if it is not found,
+           so quote something really there -- a version constraint, a script
+           body, a CI step -- rather than a command you inferred. The inferred
+           command belongs in the body.
+
+Prefer few dense facts over many thin ones. Six is plenty; two good ones beat six
+padded. Seeded claims start weak and decay in about two months unless something
+confirms them, so a wrong guess expires -- but a thin one still occupies a
+retrieval slot until it does.`;
+
+// ---------------------------------------------------------------------- gate
+
+/** Reads a repo-relative file, or null. */
 function text(root: string, rel: string): string | null {
   try {
     return readFileSync(join(root, rel), "utf8");
@@ -80,31 +148,39 @@ function text(root: string, rel: string): string | null {
   }
 }
 
-function json(root: string, rel: string): Record<string, unknown> | null {
-  const raw = text(root, rel);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
+/**
+ * Commands that act on the outside world.
+ *
+ * A release pipeline's steps are real, verbatim, and completely wrong to repeat
+ * locally. Caught for real: an earlier version lifted `npm publish --provenance
+ * --access public` out of publish.yml and filed it under "running these locally
+ * is the cheapest way to not fail review". A seeded memory that hands an agent a
+ * publish or deploy command is worse than no seeded memory, so this is checked
+ * in code and not left to the instructions.
+ */
+const OUTWARD = /\b(?:(?:npm|yarn|pnpm|bun)\s+publish|gh\s+release|docker\s+push|terraform\s+(?:apply|destroy)|kubectl\s+(?:apply|delete)|helm\s+(?:upgrade|install)|(?:aws|gcloud|az)\s+.*\bdeploy|serverless\s+deploy|git\s+push|cargo\s+publish|mvn\s+deploy|twine\s+upload|gradle\s+publish)\b/i;
 
 /**
- * Does this fact hold up against the files it cites?
+ * Files a claim must never be built out of.
  *
- * Two conditions, and the split matters. Every quoted string must appear in a
- * cited file -- that is what stops an extractor inventing a command. But some
- * facts are cited by a file's *existence* rather than its contents (a lockfile
- * says which package manager to use without containing the install command), so
- * an empty `quoted` is permitted as long as a cited file is really there.
- * Requiring a quote unconditionally silently dropped every lockfile-only repo.
+ * This is not about reading them, it is about what gets written. A claim body is
+ * stored in `.lethe/memory/`, which may be committed, so a fact quoting a line of
+ * `.env` would copy a credential out of an ignored file into a tracked one. That
+ * is the one direction that must never happen.
+ */
+const SECRETS = /(?:^|\/)(?:\.env|\.npmrc|\.netrc|\.pypirc|\.git-credentials|credentials|secrets?)\b|\.(?:pem|key|p12|pfx|keystore|jks)$|(?:^|\/)id_(?:rsa|dsa|ecdsa|ed25519)$/i;
+
+/**
+ * Does every quoted value really appear in a file the fact cites?
  *
- * The de-escaped haystack is not belt-and-braces either. A value parsed out of
- * JSON has had its escapes resolved, so the test script
- * `LETHE_HOME="${TMPDIR:-/tmp}/..."` does not appear byte-for-byte in
- * package.json, where it is written `LETHE_HOME=\"${TMPDIR:-/tmp}/...\"`. Testing
- * the raw bytes alone would reject every correct fact drawn from JSON.
+ * An empty `quoted` is permitted when a cited file exists, because a fact may
+ * legitimately rest on a file's existence rather than its contents -- a lockfile
+ * says which installer is authoritative without containing the install command.
+ *
+ * The de-escaped haystack is not belt-and-braces. A value read out of JSON has
+ * had its escapes resolved, so a script written `LETHE_HOME=\"...\"` in the file
+ * does not appear byte-for-byte once quoted back. Testing the raw bytes alone
+ * would reject correct facts drawn from any JSON manifest.
  */
 export function cited(fact: Fact, root: string): boolean {
   const present = fact.files.filter((f) => existsSync(join(root, f)));
@@ -118,343 +194,58 @@ export function cited(fact: Fact, root: string): boolean {
   return fact.quoted.every((q) => q.trim().length > 0 && hay.includes(q));
 }
 
-// --------------------------------------------------------------- extractors
-
-/**
- * The scripts worth knowing, in the order someone needs them.
- *
- * Named explicitly rather than "every script", because a package.json holds
- * release plumbing and one-off helpers that are noise to an agent. The point is
- * to answer "how do I check my change here", not to inventory the file.
- */
-const SCRIPTS = ["build", "test", "typecheck", "lint", "check", "format", "dev", "start"];
-
-/**
- * One claim for all the commands, not one per command.
- *
- * Five separate claims would each be individually true and collectively a
- * retrieval problem -- they would fill the eight-hit budget by themselves. A
- * single dense claim is what an agent actually wants to read.
- */
-function nodeCommands(root: string): Fact | null {
-  const pkg = json(root, "package.json");
-  const scripts = pkg?.scripts as Record<string, string> | undefined;
-  if (!scripts) return null;
-
-  const found = SCRIPTS.filter((s) => typeof scripts[s] === "string" && scripts[s]!.trim());
-  if (!found.length) return null;
-
-  const width = Math.max(...found.map((s) => s.length));
-  const lines = found.map((s) => `  npm run ${s.padEnd(width)}  -> ${scripts[s]}`);
-  // `npm test` is idiomatic and the only one of these with a bare alias.
-  const runner = found.includes("test") ? "npm test runs the suite. " : "";
-
-  /**
-   * The title names the scripts it actually found, rather than saying "check".
-   *
-   * Not cosmetic -- retrieval is keyword-based, and titles carry weight. The
-   * first version was titled "Build and check this repo with the npm scripts",
-   * which contains no form of the word "test", so "how do I run the tests here"
-   * did not retrieve it on lethe's own store while a direct query for "npm
-   * scripts" ranked it first. Naming the scripts is both more findable and more
-   * specific.
-   */
-  const named = found.filter((s) => s !== "dev" && s !== "start");
-  const verbs = (named.length ? named : found).slice(0, 4);
-  const phrase = verbs.length > 1
-    ? `${verbs.slice(0, -1).join(", ")} and ${verbs[verbs.length - 1]}`
-    : verbs[0]!;
-
-  return {
-    key: "commands",
-    title: `How to ${phrase} this repo -- the npm scripts in package.json`,
-    body: [
-      `${runner}The scripts, verbatim:`,
-      "",
-      ...lines,
-      "",
-      "Read out of package.json when memory was seeded, so a script that has since",
-      "been renamed makes this a stale claim -- correct it rather than working",
-      "around it.",
-    ].join("\n"),
-    files: ["package.json"],
-    quoted: found.map((s) => scripts[s]!),
-    salience: 0.6,
-  };
+export interface Rejection {
+  fact: Fact;
+  reason: string;
 }
 
-/** Make targets, for repos where the Makefile is the real entry point. */
-function makeCommands(root: string): Fact | null {
-  const raw = text(root, "Makefile");
-  if (!raw) return null;
-  // Real targets only: no pattern rules, no variable assignments, no .PHONY.
-  const targets = [...raw.matchAll(/^([a-zA-Z][\w-]*):(?!=)/gm)]
-    .map((m) => m[1]!)
-    .filter((t) => t !== "PHONY");
-  const unique = [...new Set(targets)].slice(0, 12);
-  if (!unique.length) return null;
+/**
+ * Everything a fact must satisfy before it is allowed to become a memory.
+ *
+ * In code rather than in the instructions, because the producer is a model and
+ * this writes to a store other people read. An instruction is a request.
+ */
+export function gate(facts: Fact[], root: string): { kept: Fact[]; rejected: Rejection[] } {
+  const kept: Fact[] = [];
+  const rejected: Rejection[] = [];
 
-  return {
-    key: "make",
-    title: "This repo is driven by a Makefile; `make <target>` is the entry point",
-    body: [
-      `Targets defined in the Makefile: ${unique.join(", ")}.`,
-      "",
-      "Prefer these over reconstructing the underlying command -- they exist",
-      "because the underlying command has flags that are easy to get wrong.",
-    ].join("\n"),
-    files: ["Makefile"],
-    quoted: unique.map((t) => `${t}:`),
-    salience: 0.6,
-  };
-}
-
-/** Python projects state how their suite runs in a different set of files. */
-function pythonCommands(root: string): Fact | null {
-  const files = ["pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg"].filter((f) =>
-    existsSync(join(root, f)),
-  );
-  if (!files.length) return null;
-
-  const quoted: string[] = [];
-  const notes: string[] = [];
-  const cite: string[] = [];
-  for (const f of files) {
-    const raw = text(root, f) ?? "";
-    // The strings worth keeping are the ones that change how tests are invoked.
-    for (const key of ["addopts", "testpaths", "requires-python", "python_requires"]) {
-      const m = new RegExp(`^[ \\t]*${key}[ \\t]*=[ \\t]*(.+)$`, "m").exec(raw);
-      if (!m) continue;
-      quoted.push(m[0]!.trim());
-      notes.push(`  ${f}: ${m[0]!.trim()}`);
-      if (!cite.includes(f)) cite.push(f);
+  for (const fact of facts) {
+    if (!fact.key.trim() || !fact.title.trim() || !fact.body.trim()) {
+      rejected.push({ fact, reason: "missing a key, title or body" });
+      continue;
     }
-  }
-  if (!notes.length) return null;
-
-  return {
-    key: "python",
-    title: "Python test configuration lives outside the test files",
-    body: [
-      "Options that change how the suite runs, verbatim from config:",
-      "",
-      ...notes,
-      "",
-      "pytest picks these up implicitly, so a run that behaves differently from",
-      "the plain command line is usually one of these, not the test.",
-    ].join("\n"),
-    files: cite,
-    quoted,
-    salience: 0.6,
-  };
-}
-
-/**
- * The runtime floor, and how dependencies are meant to be installed.
- *
- * Worth its own claim because getting either wrong is slow and confusing rather
- * than loud: the wrong package manager produces a second lockfile that only a
- * reviewer notices, and a runtime below the floor fails in whatever module
- * happens to touch a missing built-in first.
- */
-function runtime(root: string): Fact | null {
-  const pkg = json(root, "package.json");
-  const node = (pkg?.engines as Record<string, string> | undefined)?.node;
-
-  const LOCKS: [string, string][] = [
-    ["pnpm-lock.yaml", "pnpm install --frozen-lockfile"],
-    ["yarn.lock", "yarn install --immutable"],
-    ["bun.lockb", "bun install --frozen-lockfile"],
-    ["package-lock.json", "npm ci"],
-  ];
-  const lock = LOCKS.find(([f]) => existsSync(join(root, f)));
-  if (!node && !lock) return null;
-
-  const quoted: string[] = [];
-  const files: string[] = [];
-  const lines: string[] = [];
-
-  if (node) {
-    quoted.push(node);
-    files.push("package.json");
-    lines.push(
-      `Node ${node}, from package.json engines.node. Below the floor the failure`,
-      "surfaces in whatever module touches a missing built-in first, not as a",
-      "clear version error.",
-    );
-  }
-  if (lock) {
-    if (node) lines.push("");
-    files.push(lock[0]);
-    lines.push(
-      `Install with \`${lock[1]}\` -- ${lock[0]} is the lockfile here.`,
-      "A different package manager writes a second lockfile, which is a review",
-      "comment rather than an error, so nothing stops you.",
-    );
-  }
-
-  return {
-    key: "runtime",
-    title: node
-      ? `This repo needs Node ${node}${lock ? `, installed with ${lock[1].split(" ")[0]}` : ""}`
-      : `Install dependencies with \`${lock![1]}\``,
-    body: lines.join("\n"),
-    files,
-    quoted,
-    salience: 0.55,
-  };
-}
-
-/**
- * Workflows that do not answer "how do I check my change here".
- *
- * A release workflow's steps are real and verbatim and completely wrong to
- * repeat locally. Caught for real on lethe's own repo: the first version of this
- * extractor lifted `npm publish --provenance --access public` out of publish.yml
- * and filed it under "running these locally is the cheapest way to not fail
- * review". A seeded memory that hands an agent a publish command is worse than
- * no seeded memory.
- */
-const NOT_A_CHECK = /publish|release|deploy|^cd[-.]/i;
-
-/**
- * Commands that act on the outside world, wherever they appear.
- *
- * The filename filter above is not enough on its own: plenty of repos put a
- * deploy job in ci.yml. This is the backstop, and it is deliberately about the
- * effect rather than the tool -- anything that pushes, publishes or applies is
- * not a local check no matter which workflow it lives in.
- */
-const OUTWARD = /\b(?:(?:npm|yarn|pnpm|bun)\s+publish|gh\s+release|docker\s+push|terraform\s+apply|kubectl\s+apply|helm\s+(?:upgrade|install)|(?:aws|gcloud|az)\s+.*\bdeploy|serverless\s+deploy|git\s+push)\b/i;
-
-/**
- * What CI actually runs, which is the closest thing a repo has to a contract.
- *
- * Deliberately line-based rather than a YAML parse: adding a dependency to a
- * zero-dependency package in order to read four `run:` lines is a bad trade, and
- * the failure mode of the heuristic is a missing fact rather than a wrong one --
- * anything it does report is quoted and gated by `cited()`.
- *
- * Only single-line `run:` values are taken. A block scalar (`run: |`) in a real
- * workflow is a shell program, sometimes fifty lines of it, and none of that
- * belongs in a memory.
- */
-function ci(root: string): Fact | null {
-  const dir = join(root, ".github", "workflows");
-  let names: string[];
-  try {
-    names = readdirSync(dir)
-      .filter((f) => /\.ya?ml$/.test(f))
-      .filter((f) => !NOT_A_CHECK.test(basename(f, f.endsWith(".yaml") ? ".yaml" : ".yml")));
-  } catch {
-    return null;
-  }
-  if (!names.length) return null;
-
-  const commands: string[] = [];
-  const services: string[] = [];
-  const files: string[] = [];
-
-  for (const name of names.sort()) {
-    const rel = join(".github", "workflows", name);
-    const raw = text(root, rel);
-    if (!raw) continue;
-    let used = false;
-
-    for (const line of raw.split("\n")) {
-      const m = /^[ \t]*-?[ \t]*run:[ \t]*(?!\|)(\S.*)$/.exec(line);
-      if (!m) continue;
-      const cmd = m[1]!.trim();
-      // Nothing templated: a half-expanded ${{ }} is worse than no memory.
-      if (cmd.includes("${{") || cmd.length > 80) continue;
-      // Nothing that acts on the outside world; see OUTWARD.
-      if (OUTWARD.test(cmd)) continue;
-      if (!commands.includes(cmd)) {
-        commands.push(cmd);
-        used = true;
-      }
+    if (!fact.files.length) {
+      rejected.push({ fact, reason: "cites no file" });
+      continue;
     }
-
-    // A `services:` block means the suite needs something running. That is the
-    // single most valuable thing in a workflow file -- it is the "tests need
-    // docker compose up first" lesson, stated by the repo rather than learned
-    // the hard way at 14:31 on a Tuesday.
-    const block = /^([ \t]*)services:[ \t]*$/m.exec(raw);
-    if (block) {
-      const indent = block[1]!.length;
-      for (const line of raw.slice(block.index + block[0].length).split("\n")) {
-        if (!line.trim()) continue;
-        if (line.length - line.trimStart().length <= indent) break;
-        const named = /^[ \t]*([\w-]+):[ \t]*$/.exec(line);
-        if (named && !services.includes(named[1]!)) {
-          services.push(named[1]!);
-          used = true;
-        }
-      }
+    const secret = fact.files.find((f) => SECRETS.test(f));
+    if (secret) {
+      rejected.push({ fact, reason: `cites a file that may hold credentials: ${secret}` });
+      continue;
     }
-
-    if (used) files.push(rel);
-  }
-
-  if (!commands.length && !services.length) return null;
-
-  const kept = commands.slice(0, 8);
-  const lines: string[] = [];
-  if (services.length) {
-    lines.push(
-      `CI starts ${services.join(", ")} before the tests run, so the suite expects`,
-      "them to be up. A local run that cannot connect is far more often a missing",
-      "service than a broken test.",
-      "",
-    );
-  }
-  if (kept.length) {
-    lines.push("What CI runs, verbatim:", "");
-    for (const c of kept) lines.push(`  ${c}`);
-    lines.push("", "Running these locally is the cheapest way to not fail review.");
-  }
-
-  return {
-    key: "ci",
-    title: services.length
-      ? `CI runs ${services.join(", ")} as services; the tests expect them running`
-      : "What CI runs on every change",
-    body: lines.join("\n").trim(),
-    files,
-    quoted: [...kept, ...services.map((s) => `${s}:`)],
-    // Higher than the rest: this is the one that saves a confusing local failure.
-    salience: services.length ? 0.7 : 0.6,
-  };
-}
-
-const EXTRACTORS = [nodeCommands, makeCommands, pythonCommands, runtime, ci];
-
-/**
- * Everything this tier can learn about a repo, gated.
- *
- * The gate runs here rather than in `seed()` so a caller inspecting the facts
- * sees exactly the set that would be written -- a dry run that disagrees with
- * the real one is worse than no dry run at all.
- */
-export function facts(root: string): Fact[] {
-  const out: Fact[] = [];
-  for (const extract of EXTRACTORS) {
-    let fact: Fact | null = null;
-    try {
-      fact = extract(root);
-    } catch {
-      // An unreadable or malformed file is a missing fact, never a failed setup.
-      fact = null;
+    const missing = fact.files.filter((f) => !existsSync(join(root, f)));
+    if (missing.length === fact.files.length) {
+      rejected.push({ fact, reason: `cites files that do not exist: ${missing.join(", ")}` });
+      continue;
     }
-    if (fact && cited(fact, root)) out.push(fact);
+    if (!cited(fact, root)) {
+      rejected.push({ fact, reason: "a quoted value does not appear in the file it cites" });
+      continue;
+    }
+    const outward = OUTWARD.exec(`${fact.title}\n${fact.body}`);
+    if (outward) {
+      rejected.push({ fact, reason: `names an outward-facing command: ${outward[0]}` });
+      continue;
+    }
+    kept.push(fact);
   }
-  return out;
+
+  return { kept, rejected };
 }
 
 // ------------------------------------------------------------------ writing
 
 export interface SeedReport {
-  /** Facts the extractors produced and the gate accepted. */
   considered: number;
   written: number;
   revised: number;
@@ -469,30 +260,27 @@ function keyOf(m: Memory): string | null {
 }
 
 /**
- * Write the facts as weak claims, revising rather than duplicating.
+ * Write facts as weak claims, revising rather than duplicating.
  *
- * Idempotency comes from the seed key in `tags`, not from the watermark file.
- * The watermark records what has been read for the benefit of later tiers; it
- * cannot be what prevents duplicates, because it lives outside git while the
- * claims themselves may be committed -- so a teammate's clone has the claims and
- * no watermark, and would otherwise seed a second copy of every one.
+ * Idempotency comes from the seed key in `tags`, not from the watermark file. The
+ * watermark is git-ignored while the claims themselves may be committed, so a
+ * teammate's clone has the claims and no watermark and would otherwise seed a
+ * second copy of every one.
  *
  * A revision keeps the original id, strength and confirmations. Someone who
- * confirmed "build and check this repo with the npm scripts" should not lose
- * that because a sibling script was added to the same claim.
+ * confirmed a claim should not lose that because its wording was refreshed.
  */
 export function seed(
   store: Store,
-  root: string,
-  opts: { dryRun?: boolean; onFact?: (f: Fact) => void } = {},
+  facts: Fact[],
+  opts: { dryRun?: boolean } = {},
 ): SeedReport {
-  const found = facts(root);
   const report: SeedReport = {
-    considered: found.length,
+    considered: facts.length,
     written: 0,
     revised: 0,
     unchanged: 0,
-    sources: [...new Set(found.flatMap((f) => f.files))].sort(),
+    sources: [...new Set(facts.flatMap((f) => f.files))].sort(),
   };
 
   const existing = new Map<string, Memory>();
@@ -501,8 +289,7 @@ export function seed(
     if (k) existing.set(k, m);
   }
 
-  for (const fact of found) {
-    opts.onFact?.(fact);
+  for (const fact of facts) {
     const prior = existing.get(fact.key);
 
     if (prior && prior.title === fact.title && prior.body === fact.body) {
@@ -541,21 +328,24 @@ export function seed(
   return report;
 }
 
+/** Seeded claims already in the store, for reporting what has been learned. */
+export function seeded(store: Store): Memory[] {
+  return store.all().filter((m) => m.tags.includes(SEED_TAG));
+}
+
 // ---------------------------------------------------------------- watermark
 
 /**
- * What has been read out of this repo, for the tiers that are not built yet.
+ * What has been seeded out of this repo, and when.
  *
  * Lands in `.lethe/`, which the managed .gitignore ignores wholesale, so this is
  * per-checkout by construction -- which is right, since it records what *this*
- * machine has read. It is informational only: nothing depends on it for
- * correctness, and deleting it costs one redundant re-seed.
+ * machine has read. Informational only: nothing depends on it for correctness,
+ * and deleting it costs one redundant re-seed.
  */
 export interface Watermark {
   at: string;
   seeded: number;
-  /** Last commit whose history has been distilled. Null until that tier exists. */
-  historyThrough: string | null;
 }
 
 export function watermarkPath(root: string): string {
@@ -583,10 +373,4 @@ export function writeWatermark(root: string, next: Watermark): void {
     // A watermark that could not be written costs a redundant re-read later,
     // which is cheap and idempotent. Never worth failing setup over.
   }
-}
-
-/** For the CLI: the files a seed would actually read, by basename. */
-export function describeSources(root: string): string {
-  const names = [...new Set(facts(root).flatMap((f) => f.files))].map((f) => basename(f));
-  return names.length ? names.join(", ") : "nothing recognisable";
 }

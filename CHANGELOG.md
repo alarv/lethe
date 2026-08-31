@@ -9,6 +9,58 @@ still move.
 
 The release workflow refuses to publish a version with no section here.
 
+## [0.1.1] - 2026-08-31
+
+### Changed
+
+- **`learn` is an MCP tool now, and the agent in your session does the reading.** 0.1.0
+  shipped hand-written extractors, and the shape of the mistake was clear within a day: npm
+  scripts, then a Makefile, then `pyproject.toml` and pytest keys, then uv and poetry and
+  requirements files, then `Taskfile.yml`, then workflow `services:` blocks — with R, Go and
+  Java queued behind them. That is a language matrix maintained inside a memory tool
+  forever, reimplementing knowledge the model already has. All of it is deleted.
+
+  A second design was tried in between and also thrown away: resolving a distiller
+  (`opencode`, `claude`, Ollama, an API key) and pasting a selection of files into a prompt.
+  It needed a second, blinder heuristic to choose which files to paste, sent repository
+  contents somewhere they did not need to go, and used a weaker model than the one already
+  running in the session. lethe does not need a model — it needs a client, and it already
+  has one.
+
+  So `learn` takes no arguments the first time and returns instructions; the agent reads the
+  manifest, lockfile, task runner, CI config and CONTRIBUTING with its own file tools, then
+  calls `learn` again with the facts. No ecosystem knowledge and no file-selection rule
+  remain in lethe.
+
+- **`lethe init` no longer seeds.** Seeding is the agent's work, so setup stays instant and
+  headless and simply says what to ask for. `lethe learn` from the terminal now reports what
+  has been seeded and how strong it still is, rather than doing the seeding itself.
+
+- **`lethe learn --reset` drops every seeded claim**, leaving earned memories alone. Needed
+  because a seed key is chosen by whoever produced the fact: claims seeded by 0.1.0's
+  extractors used keys like `commands` and `runtime`, while an agent naturally writes
+  `install` and `test`, so the same subject under a different key would sit beside the old
+  one until decay removed it two months later rather than revising it.
+
+### Added
+
+- **A gate on what the agent may record**, since a nondeterministic producer needs a
+  deterministic check — an instruction is a request, this is a check. A fact is rejected if
+  it cites no file, cites files that do not exist, quotes a value that does not appear in
+  the file it cited, names an outward-facing command (`npm publish`, `kubectl apply`,
+  `terraform apply`, `git push`, `twine upload`, …), or cites anything credential-shaped
+  (`.env`, `*.pem`, `id_rsa`, `credentials*`). The reason is returned to the agent, so a bad
+  citation can be fixed and resubmitted instead of failing silently.
+
+  The credentials rule is about what gets *written*, not what gets read: a claim body lands
+  in `.lethe/memory/`, which may be committed, so a fact quoting a line of `.env` would copy
+  a secret out of an ignored file into a tracked one.
+
+  Kept from 0.1.0: seeds still enter weak (strength 0.6 against the usual 1.0), so decay
+  culls the ones never recalled or confirmed in about two months and a wrong guess expires
+  by itself. Idempotency is still a stable key per fact, so re-running revises the claim in
+  place — keeping its id, strength and confirmations — rather than writing a copy beside it.
+
 ## [0.1.0] - 2026-08-31
 
 ### Added
@@ -331,7 +383,8 @@ proven** — see [`docs/evals.md`](docs/evals.md).
   The one place they would earn their cost is grouping episodes; see
   [`docs/architecture.md`](docs/architecture.md).
 
-[Unreleased]: https://github.com/alarv/lethe/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/alarv/lethe/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/alarv/lethe/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/alarv/lethe/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/alarv/lethe/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/alarv/lethe/releases/tag/v0.0.1

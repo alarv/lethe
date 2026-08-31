@@ -2,315 +2,262 @@ import { strict as assert } from "node:assert";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SEED_STRENGTH, SEED_TAG, cited, facts, readWatermark, seed, writeWatermark } from "./learn.js";
+import {
+  type Fact,
+  LEARN_INSTRUCTIONS,
+  SEED_STRENGTH,
+  SEED_TAG,
+  cited,
+  gate,
+  readWatermark,
+  seed,
+  seeded,
+  writeWatermark,
+} from "./learn.js";
 import { withStore } from "./testing.js";
 
-function pkg(root: string, body: Record<string, unknown>): void {
-  writeFileSync(join(root, "package.json"), JSON.stringify(body, null, 2), "utf8");
+/** A fact with the boring fields filled in. */
+function fact(over: Partial<Fact> = {}): Fact {
+  return {
+    key: "install",
+    title: "Install with uv sync; uv.lock is authoritative",
+    body: "Run uv sync. uv.lock is the resolved tree the repo is tested against.",
+    files: ["pyproject.toml"],
+    quoted: [],
+    salience: 0.6,
+    ...over,
+  };
 }
 
-function workflow(root: string, name: string, body: string): void {
-  const dir = join(root, ".github", "workflows");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, name), body, "utf8");
+/** Write a fixture repo. No git and no model: neither is involved any more. */
+function files(ws: string, contents: Record<string, string>): void {
+  for (const [name, body] of Object.entries(contents)) {
+    const abs = join(ws, name);
+    mkdirSync(join(abs, ".."), { recursive: true });
+    writeFileSync(abs, body, "utf8");
+  }
 }
 
-test("seeds the npm scripts as one claim, not one per script", async () => {
-  await withStore(async (store, _home, ws) => {
-    pkg(ws, { scripts: { build: "tsc -p .", test: "node --test", lint: "eslint ." } });
+/** Gate then seed, which is exactly what the MCP tool does with `facts`. */
+function submit(store: Parameters<typeof seed>[0], ws: string, given: Fact[]) {
+  const { kept, rejected } = gate(given, ws);
+  return { ...seed(store, kept), rejected, kept };
+}
 
-    const report = seed(store, ws);
-    assert.equal(report.written, 1);
+// -------------------------------------------------------------- instructions
 
-    const claims = store.all().filter((m) => m.tags.includes(SEED_TAG));
-    assert.equal(claims.length, 1, "three scripts must not become three claims");
-    // Verbatim, because a paraphrased command cannot be found again.
-    assert.match(claims[0]!.body, /tsc -p \./);
-    assert.match(claims[0]!.body, /node --test/);
-    assert.match(claims[0]!.body, /eslint \./);
+test("the instructions say what will be rejected, not only what to write", () => {
+  // The agent has to be able to satisfy the gate without discovering it by
+  // trial and error, so the rules and the check must agree.
+  assert.match(LEARN_INSTRUCTIONS, /VERBATIM/);
+  assert.match(LEARN_INSTRUCTIONS, /stable slug/i);
+  assert.match(LEARN_INSTRUCTIONS, /source code/i);
+  assert.match(LEARN_INSTRUCTIONS, /deploys?|publish/i);
+  assert.match(LEARN_INSTRUCTIONS, /facts/);
+});
+
+// ---------------------------------------------------------------------- gate
+
+test("a quoted value that is not in the cited file is rejected", async () => {
+  await withStore(async (_s, _home, ws) => {
+    files(ws, { "pyproject.toml": 'requires-python = ">=3.11"\n' });
+
+    const ok = gate([fact({ quoted: ['requires-python = ">=3.11"'] })], ws);
+    assert.equal(ok.kept.length, 1);
+
+    const bad = gate([fact({ quoted: ['requires-python = ">=3.99"'] })], ws);
+    assert.equal(bad.kept.length, 0);
+    assert.match(bad.rejected[0]!.reason, /quoted value/);
   });
 });
 
-test("seeded claims are claims, and enter weak", async () => {
-  await withStore(async (store, _home, ws) => {
-    pkg(ws, { scripts: { test: "node --test" } });
-    seed(store, ws);
+test("a fact citing no file, or a file that does not exist, is rejected", async () => {
+  await withStore(async (_s, _home, ws) => {
+    files(ws, { "pyproject.toml": "x = 1\n" });
 
-    const claim = store.all().find((m) => m.tags.includes(SEED_TAG))!;
-    assert.equal(claim.kind, "claim");
-    assert.equal(claim.strength, SEED_STRENGTH);
-    assert.ok(claim.strength < 1, "a seed was not earned and must not start at full strength");
+    assert.match(gate([fact({ files: [] })], ws).rejected[0]!.reason, /cites no file/);
+    assert.match(gate([fact({ files: ["Cargo.toml"] })], ws).rejected[0]!.reason, /do not exist/);
+  });
+});
+
+test("a fact missing a key, title or body is rejected", async () => {
+  await withStore(async (_s, _home, ws) => {
+    files(ws, { "pyproject.toml": "x = 1\n" });
+    for (const bad of [{ key: "" }, { title: "  " }, { body: "" }]) {
+      assert.match(gate([fact(bad)], ws).rejected[0]!.reason, /missing a key, title or body/);
+    }
+  });
+});
+
+test("a fact naming an outward-facing command is rejected whatever it cites", async () => {
+  await withStore(async (_s, _home, ws) => {
+    files(ws, { "pyproject.toml": "x = 1\n" });
+
+    // Caught for real: a release step was once seeded as a local check.
+    for (const cmd of [
+      "npm publish --provenance",
+      "kubectl apply -f k8s/",
+      "twine upload dist/*",
+      "git push --follow-tags",
+      "terraform apply",
+    ]) {
+      const r = gate([fact({ body: `Ship it with ${cmd}.` })], ws);
+      assert.equal(r.kept.length, 0, `${cmd} must not be seeded`);
+      assert.match(r.rejected[0]!.reason, /outward-facing/);
+    }
+  });
+});
+
+test("a fact citing a credentials file is rejected before it is read", async () => {
+  await withStore(async (_s, _home, ws) => {
+    // A claim body lands in .lethe/memory, which may be committed. Quoting .env
+    // would copy a secret out of an ignored file into a tracked one.
+    files(ws, { ".env": "DATABASE_PASSWORD=hunter2\n", "id_rsa": "x\n", "app.pem": "x\n" });
+    for (const f of [".env", "id_rsa", "app.pem"]) {
+      const r = gate([fact({ files: [f] })], ws);
+      assert.equal(r.kept.length, 0, `${f} must never back a claim`);
+      assert.match(r.rejected[0]!.reason, /credentials/);
+    }
+  });
+});
+
+test("a fact with no quoted values is allowed when its cited file exists", async () => {
+  await withStore(async (_s, _home, ws) => {
+    // Citation by existence: a lockfile says which installer wins without
+    // containing the install command.
+    files(ws, { "uv.lock": "version = 1\n" });
+    assert.equal(gate([fact({ files: ["uv.lock"] })], ws).kept.length, 1);
+  });
+});
+
+test("a value only present once JSON escapes are resolved still counts as cited", async () => {
+  await withStore(async (_s, _home, ws) => {
+    const script = 'LETHE_HOME="${TMPDIR:-/tmp}/t" node --test';
+    files(ws, { "package.json": JSON.stringify({ scripts: { test: script } }, null, 2) });
+
+    assert.equal(cited(fact({ files: ["package.json"], quoted: [script] }), ws), true);
+  });
+});
+
+// ------------------------------------------------------------------- seeding
+
+test("a fact that passes the gate becomes a weak claim", async () => {
+  await withStore(async (store, _home, ws) => {
+    files(ws, { "pyproject.toml": 'requires-python = ">=3.11"\n' });
+
+    const report = submit(store, ws, [fact({ quoted: ['requires-python = ">=3.11"'] })]);
+    assert.equal(report.written, 1);
+    assert.equal(report.rejected.length, 0);
+
+    const claims = seeded(store);
+    assert.equal(claims.length, 1);
+    assert.equal(claims[0]!.kind, "claim");
+    assert.equal(claims[0]!.strength, SEED_STRENGTH, "a seed was not earned");
+    assert.ok(claims[0]!.tags.includes(`${SEED_TAG}:install`));
+  });
+});
+
+test("nothing offered means nothing written, and no crash", async () => {
+  await withStore(async (store, _home, ws) => {
+    files(ws, { "pyproject.toml": "x = 1\n" });
+    const report = submit(store, ws, []);
+    assert.equal(report.written, 0);
+    assert.equal(store.all().length, 0);
   });
 });
 
 test("re-seeding revises in place instead of writing a second copy", async () => {
   await withStore(async (store, _home, ws) => {
-    pkg(ws, { scripts: { test: "node --test" } });
-    seed(store, ws);
-    const first = store.all().find((m) => m.tags.includes(SEED_TAG))!;
+    files(ws, { "pyproject.toml": "x = 1\n" });
 
-    // Unchanged repo: nothing new, nothing rewritten.
-    const again = seed(store, ws);
-    assert.equal(again.written, 0);
-    assert.equal(again.unchanged, 1);
+    submit(store, ws, [fact()]);
+    const first = seeded(store)[0]!;
 
-    // Changed repo: same claim, revised.
-    pkg(ws, { scripts: { test: "node --test", build: "tsc -p ." } });
-    const third = seed(store, ws);
-    assert.equal(third.written, 0);
-    assert.equal(third.revised, 1);
+    const same = submit(store, ws, [fact()]);
+    assert.equal(same.written, 0);
+    assert.equal(same.unchanged, 1);
 
-    const all = store.all().filter((m) => m.tags.includes(SEED_TAG));
-    assert.equal(all.length, 1, "revision must not leave two claims about the same thing");
-    assert.equal(all[0]!.id, first.id, "revising must keep the id, so confirmations survive");
-    assert.match(all[0]!.body, /tsc -p \./);
+    // Same key, different wording: one claim, revised.
+    const changed = submit(store, ws, [fact({ title: "Install with uv sync, never pip" })]);
+    assert.equal(changed.written, 0);
+    assert.equal(changed.revised, 1);
+
+    const all = seeded(store);
+    assert.equal(all.length, 1, "a retitled seed must not leave two claims");
+    assert.equal(all[0]!.id, first.id, "revising keeps the id, so confirmations survive");
+    assert.match(all[0]!.title, /never pip/);
   });
 });
 
-test("a revision that changes the title leaves exactly one file", async () => {
+test("a different key is a different claim, so subjects do not collide", async () => {
   await withStore(async (store, _home, ws) => {
-    // The filename embeds a slug of the title, so a retitled memory used to land
-    // on a new path and orphan the old file -- two files, one id, and recall
-    // returning the stale wording. Caught on lethe's own store.
-    pkg(ws, { scripts: { build: "tsc -p ." } });
-    seed(store, ws);
-    const before = store.all().find((m) => m.tags.includes(SEED_TAG))!;
+    files(ws, { "pyproject.toml": "x = 1\n", "Makefile": "test:\n\tpytest\n" });
 
-    // Adding a script changes the title, since the title names what it found.
-    pkg(ws, { scripts: { build: "tsc -p .", test: "node --test" } });
-    seed(store, ws);
-
-    const after = store.all().filter((m) => m.tags.includes(SEED_TAG));
-    assert.equal(after.length, 1, "one id must never be two files");
-    assert.equal(after[0]!.id, before.id);
-    assert.notEqual(after[0]!.title, before.title, "the title should have changed");
-    assert.match(after[0]!.title, /test/, "the new title must be the one that survives");
+    submit(store, ws, [
+      fact({ key: "install" }),
+      fact({ key: "test", title: "Run the suite with make test", files: ["Makefile"] }),
+    ]);
+    assert.equal(seeded(store).length, 2);
   });
 });
 
 test("a revision keeps strength and confirmations", async () => {
   await withStore(async (store, _home, ws) => {
-    pkg(ws, { scripts: { test: "node --test" } });
-    seed(store, ws);
+    files(ws, { "pyproject.toml": "x = 1\n" });
+    submit(store, ws, [fact()]);
 
-    const claim = store.all().find((m) => m.tags.includes(SEED_TAG))!;
+    const claim = seeded(store)[0]!;
     store.confirm(claim, "someone");
     store.touch(claim);
-    const strengthened = store.get(claim.id)!.strength;
+    const strength = store.get(claim.id)!.strength;
     const confirmers = store.get(claim.id)!.confirmedBy.length;
     assert.ok(confirmers > 0);
 
-    pkg(ws, { scripts: { test: "node --test", build: "tsc -p ." } });
-    seed(store, ws);
+    submit(store, ws, [fact({ title: "Install with uv sync, refreshed" })]);
 
     const after = store.get(claim.id)!;
-    assert.equal(after.strength, strengthened, "reinforcement must survive a revision");
+    assert.equal(after.strength, strength, "reinforcement must survive a revision");
     assert.equal(after.confirmedBy.length, confirmers);
   });
 });
 
 test("dry run writes nothing but reports what it would write", async () => {
   await withStore(async (store, _home, ws) => {
-    pkg(ws, { scripts: { test: "node --test" } });
+    files(ws, { "pyproject.toml": "x = 1\n" });
 
-    const report = seed(store, ws, { dryRun: true });
-    assert.equal(report.written, 1);
-    assert.equal(store.all().filter((m) => m.tags.includes(SEED_TAG)).length, 0);
-  });
-});
-
-test("the citation gate rejects a value that is not in the cited file", async () => {
-  await withStore(async (_store, _home, ws) => {
-    pkg(ws, { scripts: { test: "node --test" } });
-
-    assert.equal(
-      cited({
-        key: "x", title: "t", body: "b", salience: 0.5,
-        files: ["package.json"], quoted: ["node --test"],
-      }, ws),
-      true,
-    );
-    assert.equal(
-      cited({
-        key: "x", title: "t", body: "b", salience: 0.5,
-        files: ["package.json"], quoted: ["pytest -q"],
-      }, ws),
-      false,
-      "an invented command must not reach the store",
-    );
-    assert.equal(
-      cited({
-        key: "x", title: "t", body: "b", salience: 0.5,
-        files: ["nope.json"], quoted: [],
-      }, ws),
-      false,
-      "a fact citing a file that does not exist is not cited",
-    );
-  });
-});
-
-test("a value only present once JSON escapes are resolved still counts as cited", async () => {
-  await withStore(async (store, _home, ws) => {
-    // The shape that made the raw-bytes-only gate reject every correct fact:
-    // the parsed script contains real quotes, the file contains escaped ones.
-    const script = 'LETHE_HOME="${TMPDIR:-/tmp}/t" node --test "dist/**/*.test.js"';
-    pkg(ws, { scripts: { test: script } });
-
-    const found = facts(ws);
-    assert.ok(found.some((f) => f.key === "commands"), "escaped JSON must not be rejected");
-    seed(store, ws);
-    assert.match(store.all().find((m) => m.tags.includes(SEED_TAG))!.body, /TMPDIR:-\/tmp/);
-  });
-});
-
-test("engines and the lockfile become a runtime claim", async () => {
-  await withStore(async (_s, _home, ws) => {
-    pkg(ws, { engines: { node: ">=22" } });
-    writeFileSync(join(ws, "package-lock.json"), "{}", "utf8");
-
-    const runtime = facts(ws).find((f) => f.key === "runtime");
-    assert.ok(runtime, "a stated engines floor is worth a claim");
-    assert.match(runtime!.title, />=22/);
-    assert.match(runtime!.body, /npm ci/);
-  });
-});
-
-test("a lockfile with no engines still seeds, cited by existence", async () => {
-  await withStore(async (_s, _home, ws) => {
-    pkg(ws, { name: "x" });
-    writeFileSync(join(ws, "pnpm-lock.yaml"), "lockfileVersion: 9\n", "utf8");
-
-    const runtime = facts(ws).find((f) => f.key === "runtime");
-    assert.ok(runtime, "requiring a quoted value dropped every lockfile-only repo");
-    assert.match(runtime!.body, /pnpm install --frozen-lockfile/);
-  });
-});
-
-test("CI services are extracted, because that is the docker-compose lesson", async () => {
-  await withStore(async (_s, _home, ws) => {
-    workflow(ws, "ci.yml", [
-      "jobs:",
-      "  test:",
-      "    services:",
-      "      postgres:",
-      "        image: postgres:16",
-      "      redis:",
-      "        image: redis:7",
-      "    steps:",
-      "      - run: npm ci",
-      "      - run: npm test",
-    ].join("\n"));
-
-    const ci = facts(ws).find((f) => f.key === "ci");
-    assert.ok(ci);
-    assert.match(ci!.title, /postgres, redis/);
-    assert.match(ci!.body, /npm ci/);
-    assert.match(ci!.body, /npm test/);
-  });
-});
-
-test("templated and block-scalar CI steps are left out", async () => {
-  await withStore(async (_s, _home, ws) => {
-    workflow(ws, "ci.yml", [
-      "jobs:",
-      "  test:",
-      "    steps:",
-      "      - run: npm ci",
-      "      - run: echo ${{ matrix.node }}",
-      "      - run: |",
-      "          set -e",
-      "          echo a fifty line shell program",
-    ].join("\n"));
-
-    const ci = facts(ws).find((f) => f.key === "ci")!;
-    assert.match(ci.body, /npm ci/);
-    assert.doesNotMatch(ci.body, /\$\{\{/, "a half-expanded expression is worse than no memory");
-    assert.doesNotMatch(ci.body, /fifty line/, "block scalars are shell programs, not memories");
-  });
-});
-
-test("a release workflow is not a check, so it is not read at all", async () => {
-  await withStore(async (_s, _home, ws) => {
-    // Caught for real on lethe's own repo: publish.yml contributed
-    // `npm publish --provenance --access public` to a claim that told the agent
-    // to run these locally.
-    workflow(ws, "ci.yml", "jobs:\n  t:\n    steps:\n      - run: npm test\n");
-    workflow(ws, "publish.yml", [
-      "jobs:",
-      "  p:",
-      "    steps:",
-      "      - run: npm publish --provenance --access public",
-      "      - run: npm i -g npm@^11",
-    ].join("\n"));
-
-    const ci = facts(ws).find((f) => f.key === "ci")!;
-    assert.match(ci.body, /npm test/);
-    assert.doesNotMatch(ci.body, /npm publish/, "never hand an agent a publish command");
-    assert.doesNotMatch(ci.body, /npm i -g/);
-    assert.deepEqual(ci.files, [join(".github", "workflows", "ci.yml")]);
-  });
-});
-
-test("an outward-facing command inside ci.yml is dropped too", async () => {
-  await withStore(async (_s, _home, ws) => {
-    // The filename filter is not enough: plenty of repos put a deploy job in
-    // the same workflow as the tests.
-    workflow(ws, "ci.yml", [
-      "jobs:",
-      "  t:",
-      "    steps:",
-      "      - run: npm test",
-      "      - run: kubectl apply -f k8s/",
-      "      - run: docker push example/app:latest",
-      "      - run: gh release create v1",
-    ].join("\n"));
-
-    const ci = facts(ws).find((f) => f.key === "ci")!;
-    assert.match(ci.body, /npm test/);
-    for (const bad of [/kubectl apply/, /docker push/, /gh release/]) {
-      assert.doesNotMatch(ci.body, bad, "a local check must not act on the outside world");
-    }
-  });
-});
-
-test("a repo with nothing recognisable seeds nothing rather than guessing", async () => {
-  await withStore(async (store, _home, ws) => {
-    writeFileSync(join(ws, "README.md"), "# just prose\n", "utf8");
-
-    assert.deepEqual(facts(ws), []);
-    const report = seed(store, ws);
-    assert.equal(report.considered, 0);
+    const { kept } = gate([fact()], ws);
+    assert.equal(seed(store, kept, { dryRun: true }).written, 1);
     assert.equal(store.all().length, 0);
   });
 });
 
-test("every seeded fact is gated, so facts() and seed() cannot disagree", async () => {
+test("a rejected fact is reported rather than swallowed", async () => {
   await withStore(async (store, _home, ws) => {
-    pkg(ws, { scripts: { build: "tsc -p ." }, engines: { node: ">=22" } });
-    workflow(ws, "ci.yml", "jobs:\n  t:\n    steps:\n      - run: npm ci\n");
+    files(ws, { "pyproject.toml": "x = 1\n" });
 
-    const found = facts(ws);
-    const report = seed(store, ws);
-    assert.equal(report.considered, found.length);
-    assert.equal(report.written, found.length);
-    for (const f of found) assert.ok(f.files.length, `${f.key} must cite a file`);
+    const report = submit(store, ws, [
+      fact({ key: "a", quoted: ["not in the file at all"] }),
+      fact({ key: "b", body: "Release with npm publish." }),
+    ]);
+    assert.equal(report.written, 0);
+    assert.equal(report.rejected.length, 2);
+    // A silent gate looks exactly like a repo with nothing worth learning.
+    assert.ok(report.rejected.every((r) => r.reason.length > 0));
   });
 });
 
 test("the watermark round-trips and is not what prevents duplicates", async () => {
   await withStore(async (store, _home, ws) => {
-    pkg(ws, { scripts: { test: "node --test" } });
-    seed(store, ws);
-    writeWatermark(ws, { at: new Date().toISOString(), seeded: 1, historyThrough: null });
+    files(ws, { "pyproject.toml": "x = 1\n" });
+    submit(store, ws, [fact()]);
+    writeWatermark(ws, { at: new Date().toISOString(), seeded: 1 });
 
-    const mark = readWatermark(ws);
-    assert.equal(mark?.seeded, 1);
-    assert.equal(mark?.historyThrough, null);
+    assert.equal(readWatermark(ws)?.seeded, 1);
 
     // The teammate case: claims present, watermark gone. Must still not duplicate.
     writeFileSync(join(ws, ".lethe", "learned.json"), "not json", "utf8");
     assert.equal(readWatermark(ws), null);
-    const again = seed(store, ws);
+    const again = submit(store, ws, [fact()]);
     assert.equal(again.written, 0);
     assert.equal(again.unchanged, 1);
   });

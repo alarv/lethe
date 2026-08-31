@@ -49,9 +49,10 @@ Four episodes in, one rule out. On Thursday your agent reads one line instead of
 rediscovering it over twenty-nine minutes — and you never see any of it, because it
 happened while you weren't waiting.
 
-And it doesn't start empty. `lethe init` reads the repo first and writes down what it
-already says about itself, because a store with nothing in it doesn't fail neutrally — it
-teaches the agent to stop asking. See [day one](#memory-on-day-one-not-day-thirty).
+And it doesn't start empty. Ask your agent to call `learn` and it reads the repo, writes
+down what the project already says about itself, and has memory from the first session —
+because a store with nothing in it doesn't fail neutrally, it teaches the agent to stop
+asking. See [day one](#memory-on-day-one-not-day-thirty).
 
 ## Install
 
@@ -174,52 +175,70 @@ ran `git add` — and `lethe doctor` warns about exactly that.
 
 ### Memory on day one, not day thirty
 
-`lethe init` also reads the repository and writes down what it already says about itself,
-so the store is not empty the first time anything asks:
-
-```
-reading this repo  ████████████████████  3/3
-memory    seeded 3 claim(s) from package.json, package-lock.json, ci.yml
-          how to build, test and check here -- the things an agent otherwise
-          rediscovers by reading three files. Weak on purpose: a seed nobody
-          recalls decays out in about two months, so a wrong guess expires.
-```
-
 An empty store doesn't fail neutrally — it **teaches the agent to stop asking.** First
 session `recall` returns nothing, second session nothing, and by the third the model has
 learned the tool doesn't pay. That is visible in lethe's own adoption numbers.
 
-So it seeds the things a repo states but never states *once*: the build, test and check
-commands with their script bodies verbatim, the runtime floor and which lockfile is
-authoritative, and what CI runs — including any `services:` block, which is the "tests need
-`docker compose up` first" lesson written down by the repo rather than learned at 14:31 on
-a Tuesday. Node, Makefile and Python layouts are all recognised. It needs no model, no
-network and no key, so unlike consolidation it can't fail for want of one.
+So there's a `learn` tool. Ask the agent in your session to call it, and it reads the
+repository and writes down what the project already says about itself:
 
-```sh
-lethe learn              # re-read the repo; revises what it wrote before
-lethe learn --dry-run    # say what it would write, change nothing
+```
+agent> learn()
+
+  → instructions: read the manifest, the lockfile, the task runner, CI config,
+    CONTRIBUTING. Record how to work here. Do not summarise the source.
+
+agent> learn(facts: [...])
+
+  seeded 3 new, revised 0, 0 already current.
+
+  rejected 1:
+    Release it
+      -> names an outward-facing command: npm publish
 ```
 
-**It does not summarise your source code**, and that's deliberate. Architecture notes
-generated from `src/` are a stale mirror of the code: wrong after the first refactor,
-re-derivable by just reading the file, and a retrieval problem besides — `recall` returns
-eight hits, and forty architecture summaries push out the one hard-won gotcha.
+**The model does the reading, and that is the whole design.** The agent in your session
+already has a capable model, the repository open, and file tools in its hands. It costs
+nothing extra, needs no key, and knows every ecosystem — Cargo, Go modules, Maven, Gradle,
+Bundler, mix, whatever your repo is — that lethe would otherwise have to carry code for.
+lethe doesn't need a model. It needs a client, and it already has one.
 
-Two things make it safe to seed a guess at all:
+Two designs were tried and thrown away, and the reasons are worth knowing:
 
-- **Every fact cites a file, and every quoted value is checked against it.** An extractor
-  that invents a command is rejected before it reaches the store. That's a mechanical gate,
-  not a careful prompt — this tier doesn't use a model.
-- **Seeded claims start weak.** They weren't earned, so they enter below a claim distilled
-  from real experience, and ordinary decay culls the ones never recalled or confirmed in
-  about two months. One that proves useful gets reinforced past the point of caring. Being
-  wrong expires by itself, which is what earns the right to guess.
+- **Hand-written extractors.** npm scripts, then a Makefile, then `pyproject.toml` and
+  pytest keys, then uv and poetry and requirements files, then `Taskfile.yml`, then
+  workflow `services:` blocks — with R, Go and Java queued behind them. A language matrix
+  maintained inside a memory tool forever, reimplementing what the model already knows.
+- **Hiring a model.** Resolving a distiller and pasting a selection of files into a prompt.
+  That needed a second, blinder heuristic to pick which files to paste, sent repository
+  contents somewhere they didn't need to go, and used a weaker model than the one already
+  running in your session.
 
-Re-running is safe: each fact has a stable key, so `lethe learn` revises the claim it wrote
-last time — keeping its id, strength and confirmations — instead of writing a copy beside
-it. That holds for a teammate cloning the repo too, whose checkout has the committed claims
-and none of your local state.
+**It does not summarise your source code.** Architecture notes generated from `src/` are a
+stale mirror: wrong after the first refactor, re-derivable by just reading the file, and a
+retrieval problem besides — `recall` returns eight hits, and forty architecture summaries
+push out the one hard-won gotcha.
+
+What lethe keeps is the part that isn't the model's job:
+
+- **A mechanical gate.** Every fact must cite a file, and every value the agent declares as
+  quoted must appear verbatim in it. Facts citing files that don't exist, quoting things
+  that aren't there, naming a publish or deploy command, or citing anything that looks like
+  a credentials file are rejected — and the reason is handed back, so the agent can fix the
+  citation and try again. That's a check in code, not an instruction in a prompt: the
+  producer is nondeterministic, so the gate can't be.
+- **Weak seeding.** Seeded claims weren't earned, so they enter below a claim distilled from
+  real experience, and ordinary decay culls the ones never recalled or confirmed in about
+  two months. One that proves useful gets reinforced past the point of caring. Being wrong
+  expires by itself, which is what earns the right to seed a guess.
+- **Idempotency.** Each fact carries a stable key, so calling `learn` again revises the
+  claim it wrote last time — keeping its id, strength and confirmations — instead of writing
+  a copy beside it. That holds for a teammate cloning the repo too, whose checkout has the
+  committed claims and none of your local state.
+
+```sh
+lethe learn      # what has been seeded from this repo, and how strong it still is
+```
 
 ### One more step, and it's the one that matters
 
@@ -281,7 +300,7 @@ lethe recall "why do the tests fail"   # search
 lethe ls                               # everything recorded
 lethe status                           # is it working?
 lethe metrics                          # is it being used, and is it distilling?
-lethe learn                            # re-read the repo's own conventions
+lethe learn                            # what has been seeded from this repo
 lethe compact --dry-run                # preview consolidation
 lethe gc                               # what is in ~/.lethe, and what is dead in it
 ```
