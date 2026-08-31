@@ -18,6 +18,7 @@
 
 <p align="center">
   <a href="#install">install</a> ·
+  <a href="#memory-on-day-one-not-day-thirty">day one</a> ·
   <a href="#what-it-does">what it does</a> ·
   <a href="docs/brain.md">how memory works</a> ·
   <a href="#contributing">contributing</a>
@@ -47,6 +48,10 @@ tue 14:31  postgres container wasn't running. `docker compose up` fixed it
 Four episodes in, one rule out. On Thursday your agent reads one line instead of
 rediscovering it over twenty-nine minutes — and you never see any of it, because it
 happened while you weren't waiting.
+
+And it doesn't start empty. `lethe init` reads the repo first and writes down what it
+already says about itself, because a store with nothing in it doesn't fail neutrally — it
+teaches the agent to stop asking. See [day one](#memory-on-day-one-not-day-thirty).
 
 ## Install
 
@@ -167,6 +172,55 @@ written into a repository. `lethe where` shows both paths. The one state still w
 watching for is claims that are neither ignored nor committed — sharing is on and nobody
 ran `git add` — and `lethe doctor` warns about exactly that.
 
+### Memory on day one, not day thirty
+
+`lethe init` also reads the repository and writes down what it already says about itself,
+so the store is not empty the first time anything asks:
+
+```
+reading this repo  ████████████████████  3/3
+memory    seeded 3 claim(s) from package.json, package-lock.json, ci.yml
+          how to build, test and check here -- the things an agent otherwise
+          rediscovers by reading three files. Weak on purpose: a seed nobody
+          recalls decays out in about two months, so a wrong guess expires.
+```
+
+An empty store doesn't fail neutrally — it **teaches the agent to stop asking.** First
+session `recall` returns nothing, second session nothing, and by the third the model has
+learned the tool doesn't pay. That is visible in lethe's own adoption numbers.
+
+So it seeds the things a repo states but never states *once*: the build, test and check
+commands with their script bodies verbatim, the runtime floor and which lockfile is
+authoritative, and what CI runs — including any `services:` block, which is the "tests need
+`docker compose up` first" lesson written down by the repo rather than learned at 14:31 on
+a Tuesday. Node, Makefile and Python layouts are all recognised. It needs no model, no
+network and no key, so unlike consolidation it can't fail for want of one.
+
+```sh
+lethe learn              # re-read the repo; revises what it wrote before
+lethe learn --dry-run    # say what it would write, change nothing
+```
+
+**It does not summarise your source code**, and that's deliberate. Architecture notes
+generated from `src/` are a stale mirror of the code: wrong after the first refactor,
+re-derivable by just reading the file, and a retrieval problem besides — `recall` returns
+eight hits, and forty architecture summaries push out the one hard-won gotcha.
+
+Two things make it safe to seed a guess at all:
+
+- **Every fact cites a file, and every quoted value is checked against it.** An extractor
+  that invents a command is rejected before it reaches the store. That's a mechanical gate,
+  not a careful prompt — this tier doesn't use a model.
+- **Seeded claims start weak.** They weren't earned, so they enter below a claim distilled
+  from real experience, and ordinary decay culls the ones never recalled or confirmed in
+  about two months. One that proves useful gets reinforced past the point of caring. Being
+  wrong expires by itself, which is what earns the right to guess.
+
+Re-running is safe: each fact has a stable key, so `lethe learn` revises the claim it wrote
+last time — keeping its id, strength and confirmations — instead of writing a copy beside
+it. That holds for a teammate cloning the repo too, whose checkout has the committed claims
+and none of your local state.
+
 ### One more step, and it's the one that matters
 
 Left to itself, an agent mostly *doesn't* call a memory tool — it has other things on its
@@ -227,9 +281,17 @@ lethe recall "why do the tests fail"   # search
 lethe ls                               # everything recorded
 lethe status                           # is it working?
 lethe metrics                          # is it being used, and is it distilling?
+lethe learn                            # re-read the repo's own conventions
 lethe compact --dry-run                # preview consolidation
 lethe gc                               # what is in ~/.lethe, and what is dead in it
 ```
+
+Anything slow reports progress — a bar where the fraction is knowable, and elapsed time
+against the timeout where it isn't, because one model call can't report a percentage
+without inventing it. It all goes to **stderr**, never stdout: stdout is the MCP transport,
+and it's also what `lethe status | grep` reads. Outside a terminal, and under CI, the
+animation is off and each phase prints once instead. `LETHE_PROGRESS=0` silences it,
+`LETHE_PROGRESS=1` forces it on.
 
 ### It cleans up after itself
 

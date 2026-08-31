@@ -9,9 +9,57 @@ still move.
 
 The release workflow refuses to publish a version with no section here.
 
-## [Unreleased]
+## [0.1.0] - 2026-08-31
 
 ### Added
+
+- **`lethe learn`, and `lethe init` now seeds memory from the repository itself.** lethe
+  used to help on day 30 and not on day 1. That is not merely a slow start: an empty store
+  does not fail neutrally, it teaches the agent that `recall` does not pay. First session
+  it returns nothing, second session nothing, and by the third the model has stopped
+  asking. Adoption measured in lethe's own store is consistent with exactly that — 12% of
+  sessions called `recall`, 18% called `note`.
+
+  So setup now reads the repo and writes the "how to work here" facts as claims: the build,
+  test and check commands with their script bodies verbatim, the runtime floor and which
+  lockfile is authoritative, and what CI runs — including any `services:` block, which is
+  the "tests need `docker compose up` first" lesson stated by the repo instead of learned
+  at 14:31 on a Tuesday. Node, Makefile and Python layouts are all recognised. It needs no
+  model, no network and no key, so unlike consolidation it cannot fail for want of one.
+
+  What it deliberately does **not** do is walk `src/` and describe the architecture. That
+  produces a stale mirror of the code — wrong after the first refactor, re-derivable by
+  reading the file, and a retrieval problem besides, since `recall` returns eight hits and
+  forty architecture summaries push out the one hard-won gotcha.
+
+  Two things make it safe to seed a guess. Every fact must cite a file and every quoted
+  value is checked against it mechanically, so an extractor that invents a command is
+  rejected before it reaches the store — the same posture as the evidence gate on
+  consolidation, and not a prompt instruction, because there is no prompt. And seeded
+  claims enter **weak** (strength 0.6, against the usual 1.0): they were not earned, so
+  ordinary decay culls the ones never recalled or confirmed in about two months, while one
+  that proves useful is reinforced past the point of caring. Being wrong expires by itself.
+
+  Re-runnable, and idempotent by construction. Each fact carries a stable key, so a second
+  run revises the claim it wrote last time instead of writing a copy beside it, preserving
+  its id, strength and confirmations. Idempotency deliberately does not come from the
+  `.lethe/learned.json` watermark: that file is git-ignored while the claims may be
+  committed, so a teammate's clone has the claims and no watermark, and a watermark-based
+  check would seed a second copy of every one.
+
+- **Progress on slow work** — a determinate bar where the fraction is knowable (reading a
+  repo, writing claims) and a spinner with an elapsed clock where it is not. A single model
+  call cannot report a percentage without inventing one, so `lethe compact` shows elapsed
+  against the distiller's own 90s timeout instead: the number worth seeing is how close it
+  is to giving up. `lethe doctor` no longer probes for a model in silence.
+
+  All of it goes to **stderr**, never stdout — stdout is the MCP transport, where one stray
+  byte corrupts the session, and it is also what `lethe status | grep` reads. Animation is
+  suppressed outside a TTY and under CI, where `\r` produces a megabyte of redraws in a
+  build log rather than a moving bar; each phase still prints once in that mode. The cursor
+  is restored on exit, on a throw, and on SIGINT, which is re-raised so Ctrl+C still means
+  Ctrl+C — an unrestored cursor outlives the process and leaves the user's shell needing
+  `reset`. `LETHE_PROGRESS=0` or `=1` overrides the detection either way.
 
 - **`lethe gc`** — what is in `~/.lethe`, how big each part is, and what is dead in it.
   `--dry-run` says what would go, `--dead` also removes directories whose project is gone,
@@ -168,6 +216,14 @@ The release workflow refuses to publish a version with no section here.
 
 ### Fixed
 
+- **Rewriting a memory whose title changed left two files carrying the same id.** The
+  filename embeds a slug of the title, so the rewrite landed on a new path and orphaned the
+  old file — `store.all()` returned the id twice and retrieval surfaced whichever it liked,
+  in practice the stale wording. Found the first time seeding revised a claim in place: the
+  report said "revised", the file on disk said so too, and `lethe recall` kept returning the
+  previous title. `Store.write` now sweeps siblings sharing the id, since the invariant
+  belongs to the store — every writer that ever retitles a memory had this bug.
+
 - **An id now resolves to the memory it currently means.** `store.get` returned the direct
   match, so an id whose memory had been superseded resolved to the cold copy — an agent
   that recalled a claim and then had it revised would `confirm` a dead memory, or `correct`
@@ -275,6 +331,7 @@ proven** — see [`docs/evals.md`](docs/evals.md).
   The one place they would earn their cost is grouping episodes; see
   [`docs/architecture.md`](docs/architecture.md).
 
-[Unreleased]: https://github.com/alarv/lethe/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/alarv/lethe/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/alarv/lethe/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/alarv/lethe/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/alarv/lethe/releases/tag/v0.0.1
