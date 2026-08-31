@@ -16,7 +16,7 @@ function pressureThreshold(): number {
 }
 import { promptHook } from "./hook.js";
 import { PLACEMENTS, choose } from "./prompt.js";
-import { claimSharing, configSources, defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, writeConfig } from "./config.js";
+import { claimSharing, configSources, defaultScope, globalConfigPath, ignoreInGit, loadConfig, projectConfigPath, staleRootIgnore, writeConfig } from "./config.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -430,11 +430,26 @@ whether this is what moved adoption.`);
       if (r) {
         console.log("");
         console.log(share
-          ? "committed -- the team inherits what has been learned"
-          : "git-ignored -- uncomment .lethe/memory/ in .gitignore to share them");
-        if (r === "present") console.log("\n.gitignore already had a lethe section; left alone.");
-        else if (r === "failed") console.log("\ncould not write .gitignore.");
-        if (share) console.log("\nre-run with --private to keep claims off the repo.");
+          ? "committed -- anyone cloning this repo inherits what has been learned"
+          : "git-ignored -- they stay on this machine and only you can read them");
+        console.log(`          the two !memory/ lines in ${join(root!, ".lethe", ".gitignore")}`);
+        if (r === "added") console.log("\nwrote that file; lethe never touches your root .gitignore.");
+        else if (r === "updated") console.log("\nflipped the !memory/ lines in the existing file.");
+        else if (r === "present") console.log("\nalready set that way; left alone.");
+        else if (r === "foreign") {
+          console.log("\n.lethe/.gitignore exists but has no !memory/ lines, so it is not one");
+          console.log("lethe wrote. Left alone -- edit it by hand or delete it and re-run.");
+        } else if (r === "failed") console.log("\ncould not write .lethe/.gitignore.");
+        if (share) console.log("re-run with --private to keep claims off the repo.");
+
+        // Older versions appended to the repository root instead.
+        const stale = staleRootIgnore(root!);
+        if (stale.length) {
+          console.log(`\nyour root .gitignore still has ${stale.length} .lethe/ rule(s) from an older`);
+          console.log("version. The nested file overrides them, so nothing is broken, but they");
+          console.log("are misleading and safe to delete:");
+          for (const l of stale) console.log(`  ${l.trim()}`);
+        }
       }
       console.log("\n`lethe doctor` will tell you if git ends up disagreeing with this.");
       return;

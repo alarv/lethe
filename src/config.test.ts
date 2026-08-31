@@ -4,12 +4,12 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { claimSharing, configSources, ignoreInGit } from "./config.js";
+import { claimSharing, configSources, ignoreInGit, staleRootIgnore } from "./config.js";
 
 /** A real repository, because claimSharing asks git rather than parsing .gitignore. */
 function withRepo(fn: (root: string) => void): void {
@@ -34,35 +34,105 @@ function writeClaim(root: string, name: string): void {
 
 // ------------------------------------------------------------- ignoreInGit
 
-test("ignoreInGit never mentions an episodes directory", () => {
+test("the rules go inside .lethe, never in the repository root", () => {
+  withRepo((root) => {
+    writeFileSync(join(root, ".gitignore"), "node_modules/\n");
+    ignoreInGit(root, true);
+    // Appending to a file the user owns is what lethe used to do, and it is how
+    // a dead `.lethe/episodes/` line ended up in other people's repositories.
+    assert.equal(readFileSync(join(root, ".gitignore"), "utf8"), "node_modules/\n");
+    assert.ok(existsSync(join(root, ".lethe", ".gitignore")));
+  });
+});
+
+test("it never mentions an episodes directory", () => {
   withRepo((root) => {
     ignoreInGit(root, true);
-    const ignore = readFileSync(join(root, ".gitignore"), "utf8");
+    const ignore = readFileSync(join(root, ".lethe", ".gitignore"), "utf8");
     // Episodes live in ~/.lethe regardless of scope. A line here protected
     // nothing and told the reader their raw notes were in the repo.
     assert.equal(ignore.includes("episodes"), false);
   });
 });
 
-test("sharing leaves the claims line commented out, private leaves it active", () => {
+test("it is a whitelist, so a future artifact cannot be committed by accident", () => {
   withRepo((root) => {
     ignoreInGit(root, true);
-    assert.match(readFileSync(join(root, ".gitignore"), "utf8"), /^# \.lethe\/memory\/$/m);
-  });
-  withRepo((root) => {
-    ignoreInGit(root, false);
-    assert.match(readFileSync(join(root, ".gitignore"), "utf8"), /^\.lethe\/memory\/$/m);
+    const lines = readFileSync(join(root, ".lethe", ".gitignore"), "utf8").split("\n");
+    assert.ok(lines.includes("*"), "must start from ignoring everything");
+    assert.ok(lines.includes("!.gitignore"));
+    assert.ok(lines.includes("!config.json"));
   });
 });
 
-test("an existing lethe section is left alone", () => {
+test("sharing leaves the claim lines active, private comments them out", () => {
   withRepo((root) => {
-    writeFileSync(join(root, ".gitignore"), "# lethe: mine, hand-edited\n.lethe/memory/\n");
+    assert.equal(ignoreInGit(root, true), "added");
+    const shared = readFileSync(join(root, ".lethe", ".gitignore"), "utf8");
+    assert.match(shared, /^!memory\/$/m);
+    assert.match(shared, /^!memory\/\*\.md$/m);
+  });
+  withRepo((root) => {
+    assert.equal(ignoreInGit(root, false), "added");
+    const priv = readFileSync(join(root, ".lethe", ".gitignore"), "utf8");
+    assert.match(priv, /^# !memory\/$/m);
+    assert.doesNotMatch(priv, /^!memory\//m);
+  });
+});
+
+test("re-running with the same choice changes nothing", () => {
+  withRepo((root) => {
+    ignoreInGit(root, true);
+    const before = readFileSync(join(root, ".lethe", ".gitignore"), "utf8");
     assert.equal(ignoreInGit(root, true), "present");
-    assert.equal(
-      readFileSync(join(root, ".gitignore"), "utf8"),
-      "# lethe: mine, hand-edited\n.lethe/memory/\n",
-    );
+    assert.equal(readFileSync(join(root, ".lethe", ".gitignore"), "utf8"), before);
+  });
+});
+
+test("flipping the choice toggles in place and keeps hand-added lines", () => {
+  withRepo((root) => {
+    ignoreInGit(root, true);
+    const path = join(root, ".lethe", ".gitignore");
+    writeFileSync(path, readFileSync(path, "utf8") + "scratch/\n");
+
+    assert.equal(ignoreInGit(root, false), "updated");
+    let now = readFileSync(path, "utf8");
+    assert.match(now, /^# !memory\/$/m);
+    assert.match(now, /^scratch\/$/m, "a hand-added line must survive");
+
+    assert.equal(ignoreInGit(root, true), "updated");
+    now = readFileSync(path, "utf8");
+    assert.match(now, /^!memory\/$/m);
+    assert.match(now, /^scratch\/$/m);
+  });
+});
+
+test("a .gitignore lethe did not write is left alone", () => {
+  withRepo((root) => {
+    const path = join(root, ".lethe", ".gitignore");
+    mkdirSync(join(root, ".lethe"), { recursive: true });
+    writeFileSync(path, "# mine\n*.tmp\n");
+    assert.equal(ignoreInGit(root, false), "foreign");
+    assert.equal(readFileSync(path, "utf8"), "# mine\n*.tmp\n");
+  });
+});
+
+test("the nested rules override a stale .lethe line left in the root", () => {
+  withRepo((root) => {
+    // What an older `lethe init` wrote. Git resolves the deeper file last, so
+    // sharing still works without anyone having to clean the root up.
+    writeFileSync(join(root, ".gitignore"), ".lethe/memory/\n");
+    ignoreInGit(root, true);
+    writeClaim(root, "a-one.md");
+    assert.equal(claimSharing(root).state, "untracked");
+  });
+});
+
+test("staleRootIgnore reports old root rules, active or commented", () => {
+  withRepo((root) => {
+    assert.deepEqual(staleRootIgnore(root), []);
+    writeFileSync(join(root, ".gitignore"), "node_modules/\n.lethe/memory/\n# .lethe/index.db\n");
+    assert.deepEqual(staleRootIgnore(root), [".lethe/memory/", "# .lethe/index.db"]);
   });
 });
 

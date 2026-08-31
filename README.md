@@ -131,12 +131,28 @@ Config is read from `~/.lethe/config.json` first, then `<repo>/.lethe/config.jso
 project can always override your global default. `lethe doctor` prints both files and
 marks which one won.
 
+**lethe never edits your root `.gitignore`.** The rules live in `.lethe/.gitignore`,
+which governs its own directory — so the whole install is one folder, and uninstalling
+is `rm -rf .lethe`:
+
+```gitignore
+*
+!.gitignore
+!config.json
+!memory/          # comment these two out and claims stay on this machine
+!memory/*.md
+```
+
+It's a whitelist, so anything a later version writes into that directory is ignored by
+default rather than turning up in someone's commit. Those two lines are the entire
+sharing decision; `lethe init` toggles them and leaves any line you added by hand alone.
+
 **This only decides where *claims* go.** Episodes — the raw, verbose record of what
 happened in a session — always live in `~/.lethe/projects/<project>/`, are private to
 you, and are never written into a repository whatever the scope says. `lethe where` shows
-both. Choosing `team` and then git-ignoring `.lethe/memory/` is the one genuinely
-confusing state: the claims sit in your repo looking shared and are committed nowhere.
-`lethe doctor` fails loudly on it.
+both. Choosing `team` and then ignoring the claims anyway is the one genuinely confusing
+state: they sit in your repo looking shared and are committed nowhere. `lethe doctor`
+fails loudly on it.
 
 ### One more step, and it's the one that matters
 

@@ -4,14 +4,6 @@ dist/
 .env
 .env.*
 
-# Derived index. Rebuilt from .lethe/memory/*.md via `lethe index`.
-# The markdown is the source of truth; this is a build artifact.
-.lethe/index.db
-.lethe/index.db-journal
-.lethe/index.db-wal
-.lethe/index.db-shm
-.lethe/models/
-
 # Local research notes, not part of the published project.
 docs/competition.md
 
@@ -21,13 +13,6 @@ evals/results/
 
 # Chrome renders at 2x; keep the committed PNG but not scratch renders
 assets/*.tmp.png
-
-# lethe: consolidated claims are committed, so anyone cloning this repo
-# inherits what has been learned. Uncomment to keep them on this machine:
-# .lethe/memory/
-#
-# Episodes are not listed here because they are never in the repo -- they live
-# in ~/.lethe/projects/<key>/ regardless of scope.
 
 # Session handoff note, not part of the project.
 docs/lethe.md

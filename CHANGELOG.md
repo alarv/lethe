@@ -11,6 +11,22 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The ignore rules live in `<repo>/.lethe/.gitignore`, not your repository root.** A
+  subdirectory `.gitignore` governs its own directory and wins over shallower patterns,
+  so lethe no longer appends to — or has to parse — a file you own, and the entire
+  install is one folder you can delete. It is written as a whitelist (`*` plus explicit
+  exceptions) so an artifact a later version writes into `.lethe/` cannot reach a commit
+  by accident; the old form was a blacklist in the root, which is how it came to be
+  protecting a directory that never existed.
+
+  Two `!memory/` lines are the whole sharing decision. `lethe init` toggles them in
+  place, leaving any line you added by hand untouched, and reports `foreign` rather than
+  overwriting a `.lethe/.gitignore` it did not write. A stale `.lethe/` rule left in your
+  root by an older version is overridden by the nested file, so nothing breaks on
+  upgrade; `lethe init` points at it so you can delete it.
+
 ### Fixed
 
 - **`lethe init` no longer writes a `.gitignore` line for `.lethe/episodes/`.** That
