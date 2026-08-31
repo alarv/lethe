@@ -144,3 +144,27 @@ test("forget deletes exactly what was named, not its replacement", async () => {
       "asked to delete a memory, deleting its replacement is the worst available reading");
   });
 });
+
+test("retitling a memory leaves one file, not one per title it has had", async () => {
+  await withStore(async (store, _home, ws) => {
+    // The filename embeds a slug of the title, so a rewrite after a title change
+    // lands on a new path. Without a sweep the old file stays: two files carrying
+    // one id, `all()` returning it twice, and retrieval free to prefer the stale
+    // wording -- which is what it did.
+    const m = store.create({ kind: "claim", title: "tests need containers", body: "one" });
+    assert.equal(readdirSync(claimDir(ws)).filter((f) => f.endsWith(".md")).length, 1);
+
+    m.title = "tests need docker compose up first";
+    m.body = "two";
+    store.write(m);
+
+    const files = readdirSync(claimDir(ws)).filter((f) => f.endsWith(".md"));
+    assert.equal(files.length, 1, "one id must never be two files");
+    assert.match(files[0]!, /docker-compose/, "the surviving file is the current title");
+
+    const all = store.all();
+    assert.equal(all.length, 1);
+    assert.equal(all[0]!.title, "tests need docker compose up first");
+    assert.equal(all[0]!.body, "two");
+  });
+});

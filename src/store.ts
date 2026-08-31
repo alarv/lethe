@@ -581,8 +581,38 @@ export class Store {
     return found ? follow(found, new Map(all.map((m) => [m.id, m]))) : null;
   }
 
+  /**
+   * One file per id, even when the title changes.
+   *
+   * The filename embeds a slug of the title, so rewriting a memory whose title
+   * has changed lands on a *new* path and leaves the old file behind. The result
+   * is two files carrying the same id and different wording -- `all()` returns
+   * the id twice and retrieval can surface whichever it likes, which in practice
+   * means the stale one.
+   *
+   * Found when seeding first revised a claim in place (learn.ts): the report
+   * said "revised", the file on disk said so too, and `lethe recall` kept
+   * returning the previous title. Sweeping siblings here rather than in the
+   * caller because the invariant belongs to the store -- every writer that ever
+   * retitles a memory has this bug otherwise.
+   */
   write(m: Memory): Memory {
-    atomicWrite(this.pathFor(m), serialize(m));
+    const target = this.pathFor(m);
+    atomicWrite(target, serialize(m));
+
+    const dir = this.dirFor(m);
+    const prefix = `${m.id.slice(0, 8)}-`;
+    try {
+      for (const name of readdirSync(dir)) {
+        if (!name.startsWith(prefix) || !name.endsWith(".md")) continue;
+        const path = join(dir, name);
+        if (path !== target) rmSync(path, { force: true });
+      }
+    } catch {
+      // A directory that cannot be listed leaves a stale sibling, which is the
+      // status quo -- never a reason to fail the write that just succeeded.
+    }
+
     this.saveDynamics(m);
     return m;
   }
@@ -611,6 +641,13 @@ export class Store {
     files?: string[];
     salience?: number;
     provenance?: string[];
+    /**
+     * Below 1 for a memory that was not earned by experience -- see
+     * learn.ts SEED_STRENGTH. Seeding the repo's own conventions at full
+     * strength would put a guess on the same footing as a lesson, and decay
+     * would never get the chance to cull the ones that turned out useless.
+     */
+    strength?: number;
   }): Memory {
     const now = new Date().toISOString();
     return this.write({
@@ -621,7 +658,7 @@ export class Store {
       tags: input.tags ?? [],
       files: input.files ?? [],
       salience: input.salience ?? 0.5,
-      strength: 1,
+      strength: input.strength ?? 1,
       decayedAt: now,
       accessCount: 0,
       created: now,
