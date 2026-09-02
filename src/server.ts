@@ -176,7 +176,12 @@ export function createServer(cwd = process.cwd()): McpServer {
       // Borrowed memories belong to another project; reinforcing them here
       // would let one project's usage distort another's decay.
       for (const m of hits) if (!m.fromProject) store.touch(m);
-      log("recall", JSON.stringify(query), { hits: hits.length });
+      log("recall", JSON.stringify(query), {
+        hits: hits.length,
+        // Lets a later confirm be matched back to the recall that surfaced it --
+        // see harvest.ts, which turns that pairing into a real eval task.
+        ...(hits.length ? { ids: hits.map((m) => m.id.slice(0, 8)).join(",") } : {}),
+      });
       return {
         content: [{
           type: "text",

@@ -75,6 +75,14 @@ Target 30–50 pairs, drawn from real sessions captured while dogfooding rather 
 invented. Invented tasks encode our assumptions about what memory is for, which is
 precisely what we are trying to test.
 
+**Harvesting them.** A recall query paired with a memory that was later confirmed useful
+is exactly a (probe, seed) pair, discovered instead of invented. `lethe eval candidates`
+mines the activity log for that pairing and appends new ones to `evals/candidates.jsonl`,
+idempotently — rerunning it only reports what's new. It undercounts the way every
+log-derived metric here does, since confirm has to be called by the model, so treat it as
+a trickle to review by hand, not a pipeline that feeds the eval unsupervised: promote the
+good ones into `tasks.jsonl` and `fixtures.json` yourself.
+
 Categories worth covering separately, because they may behave differently:
 
 - **environment traps** — setup, tooling, "you must run X first"

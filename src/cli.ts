@@ -19,12 +19,13 @@ import { PLACEMENTS, choose } from "./prompt.js";
 import { claimSharing, globalConfigPath, ignoreInGit, shareDefault, staleConfig, staleRootIgnore, writeConfig } from "./config.js";
 import { serve } from "./server.js";
 import { compact, formatReport } from "./compact.js";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LOG_PATH, buildStamp, logging, tail } from "./log.js";
 import { human, prune, survey } from "./maintain.js";
 import { describeDistiller, resolveDistiller } from "./distil.js";
 import { seeded } from "./learn.js";
+import { type Candidate, harvest } from "./harvest.js";
 import { spinning } from "./progress.js";
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
@@ -43,6 +44,7 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe hook prompt            recall for a prompt (for a UserPromptSubmit hook)
   lethe hook show              print the hook config to add to settings.json
   lethe log [-n N]             recent activity
+  lethe eval candidates        harvest real (query, confirmed memory) pairs for evals/
   lethe init                   decide if this project's claims are committed
        [--share] [--private]   answer up front instead of being asked
        [--global]              set the default for projects that have not chosen
@@ -419,6 +421,37 @@ whether this is what moved adoption.`);
       const n = i >= 0 ? Number(rest[i + 1] ?? 40) : 40;
       const lines = tail(n);
       console.log(lines.length ? lines.join("\n") : `nothing logged yet (${LOG_PATH})`);
+      return;
+    }
+
+    case "eval": {
+      if (rest[0] !== "candidates") {
+        console.error("usage: lethe eval candidates");
+        process.exit(1);
+      }
+      const root = findProjectRoot();
+      if (!root) {
+        console.error("not inside a git repository");
+        process.exit(1);
+      }
+      const out = join(root, "evals", "candidates.jsonl");
+      const existing: Candidate[] = existsSync(out)
+        ? readFileSync(out, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l))
+        : [];
+      const seen = new Set(existing.map((c) => `${c.ts}|${c.id}`));
+      const found = harvest(readLog()).filter((c) => !seen.has(`${c.ts}|${c.id}`));
+
+      if (!found.length) {
+        console.log(existing.length
+          ? `no new candidates since the ${existing.length} already in ${out}.`
+          : "no candidates yet -- confirm a recalled memory during a real session, then run this again.");
+        return;
+      }
+
+      appendFileSync(out, found.map((c) => JSON.stringify(c)).join("\n") + "\n", "utf8");
+      console.log(`harvested ${found.length} candidate${found.length === 1 ? "" : "s"} -> ${out}`);
+      for (const c of found) console.log(`  "${c.query}" -> confirmed: ${c.title}`);
+      console.log("\nReview by hand; promote the good ones into evals/tasks.jsonl and evals/fixtures.json.");
       return;
     }
 
