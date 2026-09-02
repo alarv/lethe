@@ -18,7 +18,6 @@
 
 <p align="center">
   <a href="#install">install</a> ·
-  <a href="#memory-on-day-one-not-day-thirty">day one</a> ·
   <a href="#what-it-does">what it does</a> ·
   <a href="docs/brain.md">how memory works</a> ·
   <a href="#contributing">contributing</a>
@@ -48,11 +47,6 @@ tue 14:31  postgres container wasn't running. `docker compose up` fixed it
 Four episodes in, one rule out. On Thursday your agent reads one line instead of
 rediscovering it over twenty-nine minutes — and you never see any of it, because it
 happened while you weren't waiting.
-
-And it doesn't start empty. Ask your agent to call `learn` and it reads the repo, writes
-down what the project already says about itself, and has memory from the first session —
-because a store with nothing in it doesn't fail neutrally, it teaches the agent to stop
-asking. See [day one](#memory-on-day-one-not-day-thirty).
 
 ## Install
 
@@ -106,152 +100,47 @@ npx @alarv/lethe doctor
 Needs Node 22+. On older versions retrieval falls back to a simpler ranker rather than
 failing.
 
-### Decide whether memory is committed
+### Sharing memory
 
-Memory goes where it belongs without being told. Consolidated **claims** land in
-`<repo>/.lethe/memory/`, beside the code they describe; raw **episodes** land in
-`~/.lethe/projects/<project>/` and are never written into a repository. There is no scope
-to choose and nothing to configure.
-
-That leaves exactly one question, which `lethe init` asks once per project:
+Episodes (raw session logs) never leave `~/.lethe` — always private. Claims (distilled,
+reusable facts) land in `<repo>/.lethe/memory/`, and `lethe init` asks once per project
+whether to commit them:
 
 ```sh
 npx @alarv/lethe init
 ```
 
-```
-this project's consolidated claims should be
+Commit only in a private repo — claims can name internal services, deploy steps, and the
+reasoning behind decisions. The answer just toggles two lines in `.lethe/.gitignore`, so
+changing your mind later moves no files. Skip the prompt with `lethe init --share` or
+`lethe init --private`. `lethe doctor` flags the one bad state: sharing on, nothing
+committed.
 
-  1  committed     anyone who can clone this repo inherits them; best for a private repo
-  2  git-ignored   you read them in your editor; nobody else ever sees them
-```
+### Seeding memory
 
-**Committed is for private repositories.** The audience for committed memory is whoever
-can clone the repo, and in a public one that is everybody. Distilled claims routinely name
-internal services, deploy steps and the reasoning behind decisions — none of it secret,
-all of it context you probably did not mean to publish. lethe cannot check visibility for
-you (that is a property of the host, not the checkout) so it says so and leaves the call
-to you.
+An empty store teaches an agent to stop calling `recall`. So there's a `learn` tool: ask
+your agent to call it, and it reads the repo and writes down what the project already
+says about itself — conventions, commands, gotchas — instead of starting from nothing.
 
-To skip the question — in a script, or because you already know:
-
-```sh
-lethe init --share               # committed
-lethe init --private             # git-ignored
-lethe init --global --share      # what projects that have not chosen start from
-```
-
-Both answers write to the same directory, so **changing your mind later moves no files**:
-it comments two lines in `.lethe/.gitignore` in or out. That file, not a config setting,
-is the decision — which is why nothing can disagree with it. `lethe doctor` asks git what
-actually happened.
-
-**lethe never edits your root `.gitignore`.** The rules live in `.lethe/.gitignore`,
-which governs its own directory — so the whole install is one folder, and uninstalling
-is `rm -rf .lethe`:
-
-```gitignore
-*
-!.gitignore
-!memory/          # comment these two out and claims stay on this machine
-!memory/*.md
-```
-
-It's a whitelist, so anything a later version writes into that directory is ignored by
-default rather than turning up in someone's commit. Those two lines are the entire sharing
-decision; `lethe init` toggles them and leaves any line you added by hand alone.
-
-**Commit `.lethe/.gitignore` even when the memories are private.** It is what keeps them
-out of git, and it has to be present in everyone's working tree to do that — including
-people who never chose it. If it were ignored too, untracking it would be a change others
-receive: a `git pull` would delete their copy and their own private memories would stop
-being ignored.
-
-**Episodes are not part of this decision.** The raw, verbose record of what happened in
-a session always lives in `~/.lethe/projects/<project>/`, is private to you, and is never
-written into a repository. `lethe where` shows both paths. The one state still worth
-watching for is claims that are neither ignored nor committed — sharing is on and nobody
-ran `git add` — and `lethe doctor` warns about exactly that.
-
-### Memory on day one, not day thirty
-
-An empty store doesn't fail neutrally — it **teaches the agent to stop asking.** First
-session `recall` returns nothing, second session nothing, and by the third the model has
-learned the tool doesn't pay. That is visible in lethe's own adoption numbers.
-
-So there's a `learn` tool. Ask the agent in your session to call it, and it reads the
-repository and writes down what the project already says about itself:
-
-```
-agent> learn()
-
-  → instructions: read the manifest, the lockfile, the task runner, CI config,
-    CONTRIBUTING. Record how to work here. Do not summarise the source.
-
-agent> learn(facts: [...])
-
-  seeded 3 new, revised 0, 0 already current.
-
-  rejected 1:
-    Release it
-      -> names an outward-facing command: npm publish
-```
-
-**The model does the reading, and that is the whole design.** The agent in your session
-already has a capable model, the repository open, and file tools in its hands. It costs
-nothing extra, needs no key, and knows every ecosystem — Cargo, Go modules, Maven, Gradle,
-Bundler, mix, whatever your repo is — that lethe would otherwise have to carry code for.
-lethe doesn't need a model. It needs a client, and it already has one.
-
-Two designs were tried and thrown away, and the reasons are worth knowing:
-
-- **Hand-written extractors.** npm scripts, then a Makefile, then `pyproject.toml` and
-  pytest keys, then uv and poetry and requirements files, then `Taskfile.yml`, then
-  workflow `services:` blocks — with R, Go and Java queued behind them. A language matrix
-  maintained inside a memory tool forever, reimplementing what the model already knows.
-- **Hiring a model.** Resolving a distiller and pasting a selection of files into a prompt.
-  That needed a second, blinder heuristic to pick which files to paste, sent repository
-  contents somewhere they didn't need to go, and used a weaker model than the one already
-  running in your session.
-
-**It does not summarise your source code.** Architecture notes generated from `src/` are a
-stale mirror: wrong after the first refactor, re-derivable by just reading the file, and a
-retrieval problem besides — `recall` returns eight hits, and forty architecture summaries
-push out the one hard-won gotcha.
-
-What lethe keeps is the part that isn't the model's job:
-
-- **A mechanical gate.** Every fact must cite a file, and every value the agent declares as
-  quoted must appear verbatim in it. Facts citing files that don't exist, quoting things
-  that aren't there, naming a publish or deploy command, or citing anything that looks like
-  a credentials file are rejected — and the reason is handed back, so the agent can fix the
-  citation and try again. That's a check in code, not an instruction in a prompt: the
-  producer is nondeterministic, so the gate can't be.
-- **Weak seeding.** Seeded claims weren't earned, so they enter below a claim distilled from
-  real experience, and ordinary decay culls the ones never recalled or confirmed in about
-  two months. One that proves useful gets reinforced past the point of caring. Being wrong
-  expires by itself, which is what earns the right to seed a guess.
-- **Idempotency.** Each fact carries a stable key, so calling `learn` again revises the
-  claim it wrote last time — keeping its id, strength and confirmations — instead of writing
-  a copy beside it. That holds for a teammate cloning the repo too, whose checkout has the
-  committed claims and none of your local state.
+Every fact it writes must cite a real file and quote it verbatim, or it's rejected.
+Seeded claims start weak and decay if nothing ever confirms them; one that proves useful
+gets reinforced.
 
 ```sh
 lethe learn      # what has been seeded from this repo, and how strong it still is
 ```
 
-### One more step, and it's the one that matters
+### Make recall automatic
 
-Left to itself, an agent mostly *doesn't* call a memory tool — it has other things on its
-mind. So don't rely on it:
+Left alone, an agent mostly doesn't call a memory tool — it has other things on its mind.
+A hook fixes that by running `recall` before the model even sees your message, so
+whatever it finds is already in context:
 
 ```sh
 lethe hook show      # prints a hook config to add to your host
 ```
 
-That runs recall **before** the model sees your turn and injects what it finds, so memory
-arrives whether or not anything thought to ask. opencode gets the same via
-[`plugins/opencode.js`](plugins/opencode.js).
+opencode gets the same via [`plugins/opencode.js`](plugins/opencode.js).
 
 ## What it does
 
@@ -290,8 +179,8 @@ tomorrow, you keep the markdown.
 
 Claims land in the repo so your team can review what the agent learned before it becomes
 shared knowledge; whether they are committed is one line in `.lethe/.gitignore` — see
-[Decide whether memory is committed](#decide-whether-memory-is-committed). Episodes never
-move: they are a private scratchpad that consolidation eventually consumes.
+[Sharing memory](#sharing-memory). Episodes never move: they are a private scratchpad
+that consolidation eventually consumes.
 
 ### Day to day
 
@@ -369,15 +258,13 @@ extracting the general rule.**
 [`docs/brain.md`](docs/brain.md) has the full account, with citations and an honest
 section on where we break from biology.
 
-## Does it actually work?
+## Evaluations
 
-There's an eval, it's public, and it reports where lethe loses:
-[`docs/evals.md`](docs/evals.md).
+[`docs/evals.md`](docs/evals.md) — public, and it reports where lethe loses.
 
-The claim under test was written down before the measuring started, in a form that can
-fail: an agent with distilled memory should reach a correct answer in fewer turns and
-fewer tokens than one with raw session logs. If distillation can't beat raw logs, the
-project should stop — and the eval exists to find that out rather than to flatter us.
+The claim under test: an agent with distilled memory reaches a correct answer in fewer
+turns and fewer tokens than one with raw session logs. If distillation can't beat raw
+logs, the project should stop.
 
 ## Design
 
