@@ -182,11 +182,17 @@ export function createServer(cwd = process.cwd()): McpServer {
         // see harvest.ts, which turns that pairing into a real eval task.
         ...(hits.length ? { ids: hits.map((m) => m.id.slice(0, 8)).join(",") } : {}),
       });
+      // The empty branch has always named its next tool, and notes duly get
+      // written; the branch that found something named none, and confirm was
+      // called zero times in 111 sessions. Close the asymmetry -- the model
+      // does what the tool result asks it to do, and nothing was asking.
+      const footer = "Once you know whether one of these was right, confirm <id> — " +
+        "or correct <id> if it is out of date.";
       return {
         content: [{
           type: "text",
           text: hits.length
-            ? hits.map(render).join("\n\n")
+            ? `${hits.map(render).join("\n\n")}\n\n${footer}`
             : "No memories matched. If you learn something durable, record it with the note tool.",
         }],
       };
@@ -291,7 +297,11 @@ export function createServer(cwd = process.cwd()): McpServer {
 
   server.tool(
     "confirm",
-    "This memory was accurate and useful. Strengthens it so it survives decay.",
+    "Call this the moment a recalled memory turns out to have been right: you acted on " +
+      "it, it saved you a step, or what you found in the code matched it. Pass the id " +
+      "from recall. One call, no other arguments, and it is the only thing that tells " +
+      "lethe which memories are worth keeping -- without it a memory can only decay, " +
+      "however often it proves correct.",
     { id: z.string() },
     async ({ id }) => {
       await ensureBound();

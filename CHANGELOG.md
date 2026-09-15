@@ -9,6 +9,52 @@ still move.
 
 The release workflow refuses to publish a version with no section here.
 
+## [0.1.2] - 2026-09-15
+
+### Changed
+
+- **`lethe eval candidates` harvests corrections too, because confirm never happens.**
+  Harvest was built to pair a recall with a later `confirm`, and produced nothing: `confirm`
+  has been called zero times across 111 sessions, measured twice. A harvester waiting on a
+  signal that does not occur is not a slow pipeline, it is a broken one. `correct` does
+  occur — 14 times in the same window — and for an eval that measures *retrieval* it is
+  nearly as good: correcting a memory proves recall surfaced the one the session wanted. It
+  says the content was wrong, not that the search was. Candidates now record `via`
+  (`confirm` or `correct`) so review can weigh them, and a corrected pair is flagged as
+  evidence of the probe rather than of the seed text.
+
+  Note for anyone re-running this on old logs: no pair can be recovered from history. The
+  `ids=` field harvest matches on was added to recall's log line after logging had already
+  gone off, so no existing recall line carries it. Harvest works from here forward only.
+
+- **`confirm` asks to be called now.** Its description said what it does ("Strengthens it so
+  it survives decay") rather than when to call it, which docs/api-design.md warns against —
+  compare `correct`, whose "this memory is now wrong" names a moment and which the model
+  calls readily. The sharper cause was in recall's output: the branch that found nothing
+  named its next tool and notes duly got written, while the branch that found something
+  ended with no call to action at all. So recall now closes with a line pointing at confirm
+  and correct with the ids in hand, and confirm's description names the moment instead of
+  the mechanism. Whether this moves a number that has been zero twice is for the next
+  measurement to say.
+
+### Fixed
+
+- **`lethe metrics` reported a dead log as if it were current.** The header read
+  `since <first line>` and stopped there, so a log that had not been written for two weeks
+  rendered as a live window: the same adoption rows, the same totals, no indication that
+  every number in them had stopped moving. This is the failure log.ts was written to
+  prevent, one level up — "nothing was recorded" and "nothing was written down" are
+  different answers, and metrics was giving the first when the truth was the second.
+  It is an easy one to fall for, because the numbers look plausible and nothing about them
+  says when they are from. Found while measuring adoption on 2026-09-15 against a log whose
+  last line was 2026-08-31, and very nearly reported as that day's usage.
+
+  Metrics now carries `until` alongside `since` and prints the window as a range
+  (`— 2026-08-24 to 2026-08-31`). When the last line is more than two days old it says how
+  long the log has been silent, that the figures below end on that date, and how to fix it —
+  `lethe init --debug`, then `lethe restart`, because a running server keeps the config it
+  started with and turning logging on does not reach one.
+
 ## [0.1.1] - 2026-08-31
 
 ### Changed
@@ -383,7 +429,8 @@ proven** — see [`docs/evals.md`](docs/evals.md).
   The one place they would earn their cost is grouping episodes; see
   [`docs/architecture.md`](docs/architecture.md).
 
-[Unreleased]: https://github.com/alarv/lethe/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/alarv/lethe/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/alarv/lethe/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/alarv/lethe/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/alarv/lethe/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/alarv/lethe/compare/v0.0.1...v0.0.2

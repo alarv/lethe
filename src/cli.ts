@@ -444,14 +444,16 @@ whether this is what moved adoption.`);
       if (!found.length) {
         console.log(existing.length
           ? `no new candidates since the ${existing.length} already in ${out}.`
-          : "no candidates yet -- confirm a recalled memory during a real session, then run this again.");
+          : "no candidates yet -- confirm or correct a recalled memory during a real session,\nthen run this again. Needs logging on: `lethe init --debug`.");
         return;
       }
 
       appendFileSync(out, found.map((c) => JSON.stringify(c)).join("\n") + "\n", "utf8");
       console.log(`harvested ${found.length} candidate${found.length === 1 ? "" : "s"} -> ${out}`);
-      for (const c of found) console.log(`  "${c.query}" -> confirmed: ${c.title}`);
+      for (const c of found) console.log(`  "${c.query}" -> ${c.via}ed: ${c.title}`);
       console.log("\nReview by hand; promote the good ones into evals/tasks.jsonl and evals/fixtures.json.");
+      console.log("`corrected` pairs prove recall found the right memory, not that its text was");
+      console.log("right -- check the seed wording before promoting one.");
       return;
     }
 
