@@ -202,3 +202,35 @@ test("since can exclude a contaminated period from the metrics", () => {
   assert.equal(metrics(since(lines, "2026-08-28")).compactionsFailed, 0, "filtered does not");
   assert.equal(metrics(since(lines, "2026-08-28")).recalls, 1);
 });
+
+test("reports the window as a range, not an open-ended 'since'", () => {
+  const m = metrics([
+    line("2026-01-01T00:00:00Z", "start", "connected  build=b1"),
+    line("2026-01-08T00:00:00Z", "recall", "q  hits=3"),
+  ]);
+  assert.equal(m.since, "2026-01-01T00:00:00Z");
+  assert.equal(m.until, "2026-01-08T00:00:00Z");
+  assert.match(formatMetrics(m, new Date("2026-01-08T01:00:00Z")),
+    /lethe metrics — 2026-01-01 to 2026-01-08/);
+});
+
+test("says so when the log stopped being written, rather than passing it off as current", () => {
+  const m = metrics([
+    line("2026-01-01T00:00:00Z", "start", "connected  build=b1"),
+    line("2026-01-01T00:01:00Z", "recall", "q  hits=3"),
+  ]);
+  const out = formatMetrics(m, new Date("2026-01-16T00:00:00Z"));
+  assert.match(out, /Nothing has been logged for 14 days/,
+    "a frozen window is the failure this exists to catch");
+  assert.match(out, /lethe init --debug/, "and it must say how to fix it");
+  assert.match(out, /lethe restart/, "including that a running server keeps its config");
+});
+
+test("a fresh log carries no staleness warning", () => {
+  const m = metrics([
+    line("2026-01-01T00:00:00Z", "start", "connected  build=b1"),
+    line("2026-01-01T00:01:00Z", "recall", "q  hits=3"),
+  ]);
+  assert.doesNotMatch(formatMetrics(m, new Date("2026-01-01T06:00:00Z")),
+    /Nothing has been logged/);
+});

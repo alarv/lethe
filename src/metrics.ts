@@ -16,6 +16,16 @@ import { LOG_PATH } from "./log.js";
 
 export interface Metrics {
   since: string | null;
+  /**
+   * Timestamp of the last line in the log, i.e. where the window actually ends.
+   *
+   * Reported because `since` alone reads as "up to now", and a log that stopped
+   * being written does not look any different from a quiet one. Logging is off by
+   * default and a config change does not reach an already-running server, so the
+   * realistic failure is a frozen window presented as current: this happened for
+   * 15 days and the adoption rows below were read as today's numbers.
+   */
+  until: string | null;
   sessions: number;
   sessionsUsing: number;
   sessionsRecalling: number;
@@ -155,6 +165,7 @@ export function metrics(lines: string[]): Metrics {
 
   return {
     since: entries[0]?.ts ?? null,
+    until: entries[entries.length - 1]?.ts ?? null,
     sessions: sessions.length,
     sessionsUsing: sessions.filter((s) => s.used).length,
     sessionsRecalling: sessions.filter((s) => s.recalled).length,
@@ -240,7 +251,15 @@ function pct(n: number, of: number): string {
   return of ? `${Math.round((n / of) * 100)}%` : "n/a";
 }
 
-export function formatMetrics(m: Metrics): string {
+/**
+ * How long the log may go unwritten before the window is called stale.
+ *
+ * Two days, because a weekend of not coding is normal and a fortnight of
+ * apparently-live numbers that stopped moving is not.
+ */
+const STALE_DAYS = 2;
+
+export function formatMetrics(m: Metrics, now: Date = new Date()): string {
   if (!m.sessions && !m.recalls) {
     return "No activity recorded yet. Run `lethe doctor` if that is unexpected.";
   }
@@ -248,7 +267,24 @@ export function formatMetrics(m: Metrics): string {
   const row = (label: string, value: string, note = "") =>
     lines.push(`  ${label.padEnd(26)} ${value.padStart(9)}   ${note}`);
 
-  lines.push(`lethe metrics${m.since ? ` — since ${m.since.slice(0, 10)}` : ""}`);
+  const day = (ts: string) => ts.slice(0, 10);
+  // A range, not "since": the end of the window is the part that gets misread.
+  const window = m.since && m.until
+    ? ` — ${day(m.since)} to ${day(m.until)}`
+    : m.since ? ` — since ${day(m.since)}` : "";
+  lines.push(`lethe metrics${window}`);
+
+  const staleFor = m.until
+    ? Math.floor((now.getTime() - new Date(m.until).getTime()) / 86_400_000)
+    : 0;
+  if (staleFor >= STALE_DAYS) {
+    lines.push("");
+    lines.push(`  Nothing has been logged for ${staleFor} days. Every number below ends`);
+    lines.push(`  ${day(m.until!)} — it is a snapshot of that window, not of today.`);
+    lines.push("  Logging is off, or a server started before it was turned on:");
+    lines.push("  `lethe init --debug` then `lethe restart`, since a running server");
+    lines.push("  keeps the config it started with.");
+  }
   lines.push("");
   lines.push("adoption — the number that decides whether anything else matters");
   row("sessions connected", String(m.sessions));
