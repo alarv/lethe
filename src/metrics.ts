@@ -102,6 +102,12 @@ export function since(lines: string[], date: string): string[] {
   return lines.filter((l) => l.slice(0, date.length) >= date);
 }
 
+/** Events written only when a tool is called, by the model or the prompt hook. */
+const TOOL_CALLS = new Set(["recall", "note", "confirm", "correct", "forget", "learn"]);
+
+/** server.ts logs this when a distiller subprocess tries to start a server. */
+const DISTILLER_CHILD = /refusing to start inside a distiller subprocess/;
+
 export function metrics(lines: string[]): Metrics {
   const entries = parse(lines);
 
@@ -117,13 +123,21 @@ export function metrics(lines: string[]): Metrics {
 
   for (const e of entries) {
     if (e.event === "start") {
+      // A compaction's distiller subprocess inherits the MCP config, starts a
+      // server, and logs a refusal. It is not a session: counting it put 25 of
+      // 141 "sessions" in the denominator that no person ever opened, and began a
+      // fresh session that swallowed the parent's following events.
+      if (DISTILLER_CHILD.test(e.rest)) continue;
       sessions.push({ used: false, recalled: false, recalledAny: false });
       const build = /build=(\S+)/.exec(e.rest)?.[1];
       if (build) builds.add(build);
       continue;
     }
     const current = sessions[sessions.length - 1];
-    if (current) current.used = true;
+    // Only a tool call counts as use. compact, sampling and index lines are the
+    // server doing its own housekeeping, and counting them reported 63% of
+    // sessions as using lethe when the model had called it in 40%.
+    if (current && TOOL_CALLS.has(e.event)) current.used = true;
 
     switch (e.event) {
       case "recall": {
@@ -288,7 +302,7 @@ export function formatMetrics(m: Metrics, now: Date = new Date()): string {
   lines.push("");
   lines.push("adoption — the number that decides whether anything else matters");
   row("sessions connected", String(m.sessions));
-  row("used lethe at all", `${m.sessionsUsing}`, pct(m.sessionsUsing, m.sessions));
+  row("called a lethe tool", `${m.sessionsUsing}`, pct(m.sessionsUsing, m.sessions));
   row("called recall", `${m.sessionsRecalling}`, pct(m.sessionsRecalling, m.sessions));
   row("never touched it", `${m.sessions - m.sessionsUsing}`,
     pct(m.sessions - m.sessionsUsing, m.sessions));

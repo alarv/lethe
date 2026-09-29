@@ -234,3 +234,26 @@ test("a fresh log carries no staleness warning", () => {
   assert.doesNotMatch(formatMetrics(m, new Date("2026-01-01T06:00:00Z")),
     /Nothing has been logged/);
 });
+
+test("a distiller subprocess is not a session, and does not steal the parent's events", () => {
+  const m = metrics([
+    line("2026-01-01T00:00:00Z", "start", "mcp server connected  build=b1"),
+    line("2026-01-01T00:01:00Z", "note", "a  id=1"),
+    line("2026-01-01T00:02:00Z", "start", "refusing to start inside a distiller subprocess"),
+    line("2026-01-01T00:03:00Z", "recall", `"q"  hits=3`),
+  ]);
+  assert.equal(m.sessions, 1, "the refusal line must not add to the denominator");
+  assert.equal(m.sessionsRecalling, 1, "the recall after it belongs to the real session");
+});
+
+test("housekeeping is not use: only tool calls mark a session as having used lethe", () => {
+  const m = metrics([
+    line("2026-01-01T00:00:00Z", "start", "mcp server connected  build=b1"),
+    line("2026-01-01T00:01:00Z", "compact", "raw episodes went stale  episodes=6"),
+    line("2026-01-01T00:02:00Z", "sampling", "distilling via opencode"),
+    line("2026-01-01T01:00:00Z", "start", "mcp server connected  build=b1"),
+    line("2026-01-01T01:01:00Z", "forget", "abc12345  id=abc12345"),
+  ]);
+  assert.equal(m.sessions, 2);
+  assert.equal(m.sessionsUsing, 1, "compact and sampling are the server's doing, forget is a tool call");
+});
