@@ -16,6 +16,7 @@ import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { MemoryIndex, type IndexFile } from "./index-db.js";
 import { rank } from "./rank.js";
+import { admit, contentTerms, documentFrequency, type Frequencies } from "./query.js";
 import { log } from "./log.js";
 import {
   existsSync,
@@ -939,5 +940,51 @@ export class Store {
     } finally {
       index.close();
     }
+  }
+
+  /**
+   * search(), with a relevance floor. What the recall tool returns.
+   *
+   * search() ranks; it never rejects. The MATCH is an OR of every term, so one
+   * shared word is a hit, and with no floor recall always fills its limit from a
+   * store of a few dozen memories. Measured over real recalls: every one came
+   * back with exactly 8 hits, and one memory about async await suspension points
+   * was in all of them, including queries about GDPR and a Confluence template.
+   * A result list that is always full says nothing about whether anything in it
+   * was relevant.
+   *
+   * The floor is the prompt hook's admission rule -- two content terms from the
+   * query, or one term rare enough in the store to be evidence alone -- so the
+   * two paths agree on what counts as a match. Over-fetch, then filter, so BM25
+   * still decides the order and admission only decides membership.
+   */
+  recall(query: string, limit = 8, paths: string[] = []): Memory[] {
+    const queryTerms = contentTerms(query);
+    if (!queryTerms.length) return []; // nothing but common words
+    const candidates = this.search(query, limit * 3, paths);
+    if (!candidates.length) return [];
+    // The best match always survives; only the rest must earn a place. Applying
+    // the floor to the top hit as well was measured and rejected: it dropped the
+    // right answer on paraphrased queries (compact MRR 0.94 -> 0.78), because a
+    // paraphrase and an unrelated memory both share one ordinary word with the
+    // question, and no lexical rule can tell them apart. What the floor CAN do
+    // without that cost is stop the tail from being padded.
+    const [top, ...rest] = candidates;
+    return [top!, ...admit(rest, queryTerms, this.frequencies(queryTerms))].slice(0, limit);
+  }
+
+  private frequencies(queryTerms: string[]): Frequencies {
+    const index = MemoryIndex.open(join(letheHome(), "index.db"));
+    if (index) {
+      try {
+        return index.frequencies(queryTerms);
+      } catch (e) {
+        log("index", `frequencies failed, counting from the store: ${(e as Error).message}`);
+      } finally {
+        index.close();
+      }
+    }
+    const corpus = this.all();
+    return { total: corpus.length, df: documentFrequency(corpus, queryTerms) };
   }
 }

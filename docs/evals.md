@@ -165,3 +165,38 @@ memory should help most where wording differs.
 **Still losing on cost.** Compact takes more context to reach an answer, because a claim
 body is fuller than the single episode that would have answered. Halved by better ranking,
 not eliminated.
+
+### Precision, and questions with no answer (2026-09-29)
+
+hit@k and MRR only ask whether the answer appeared. Real recalls showed the failure they
+cannot see: every one came back with exactly 8 hits, and one memory was in all 8 whatever
+the topic. So the eval now has six **no-answer tasks** (`difficulty: "negative"`) — questions
+that share an everyday word with the store and have no answer in it — and two columns:
+**precision** (of what came back for answerable tasks, the share from the right scenario)
+and **off-topic** (share of no-answer tasks that returned anything). The no-answer tasks
+are excluded from hit@k and MRR, so the earlier rows did not move.
+
+A third mechanism, `recall`, is what the recall tool returns: fts5 plus a relevance floor
+(the prompt hook's rule — two content terms from the question, or one rare term), applied
+to every hit but the first.
+
+| mechanism, compact | MRR | precision | off-topic |
+|---|---|---|---|
+| `fts5` | 0.94 | 42% | 100% |
+| floor on every hit (rejected) | 0.78 | 77% | 50% |
+| `recall` — floor on all but the top hit | 0.89 | 75% | 100% |
+
+**The trade, stated.** The floor buys 33 points of precision for 0.05 MRR: two paraphrased
+questions whose answer sat at rank 2 sharing one ordinary word. Flooring the top hit too
+was worse — it dropped rank-1 answers for the same reason. A paraphrase and an unrelated
+memory can each share exactly one word with a question, and no lexical rule separates
+them. Off-topic stays at 100%: recall still always answers. That is the ceiling of
+keyword retrieval, not a tuning problem.
+
+On the real store the floor alone did little (mean hits 8.0 -> 7.5): real questions are
+long and one project's memories share a vocabulary, so two common terms are easy to match.
+Most of the real noise came from reinforcement instead — every recall strengthened every
+hit it returned, and strength multiplies rank, so a memory ranked because it had ranked
+before. Recall now reinforces weakly and ranking counts strength only up to 1; together
+the memory that was in 8 of 8 real recalls is in 3 of 8. The eval cannot see that change —
+its fixtures all have default strength — which is a gap worth closing.

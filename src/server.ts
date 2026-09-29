@@ -17,6 +17,14 @@ import { buildStamp, log } from "./log.js";
 import { logResolved, resolveDistiller } from "./distil.js";
 import { LEARN_INSTRUCTIONS, gate, seed, seeded, writeWatermark } from "./learn.js";
 
+/**
+ * Strength added to each memory a recall returns.
+ *
+ * A fifth of the old 0.1, matching the hook: retrieval says a memory matched,
+ * not that it helped. The strong signal is confirm.
+ */
+const RECALL_REINFORCEMENT = 0.02;
+
 function render(m: Memory): string {
   const from = m.fromProject ? ` — from ${m.fromProject}` : "";
   return [
@@ -172,10 +180,17 @@ export function createServer(cwd = process.cwd()): McpServer {
     },
     async ({ query, paths, limit }) => {
       await ensureBound();
-      const hits = store.search(query, limit, paths);
+      const hits = store.recall(query, limit, paths);
       // Borrowed memories belong to another project; reinforcing them here
       // would let one project's usage distort another's decay.
-      for (const m of hits) if (!m.fromProject) store.touch(m);
+      // Weakly, and the same as the prompt hook. Every returned hit used to get
+      // the full 0.1, and strength multiplies rank, so whatever came back once
+      // ranked higher and came back again: measured, the top three memories in
+      // one project had each been reinforced ~9 times -- once per recall --
+      // and one of them was in all 8 real recalls, on any topic. Being returned
+      // is not evidence of being useful; confirm is (0.4). accessCount still
+      // moves, which frequency-driven consolidation depends on.
+      for (const m of hits) if (!m.fromProject) store.touch(m, RECALL_REINFORCEMENT);
       log("recall", JSON.stringify(query), {
         hits: hits.length,
         // Lets a later confirm be matched back to the recall that surfaced it --
@@ -365,10 +380,14 @@ export function createServer(cwd = process.cwd()): McpServer {
     { id: z.string() },
     async ({ id }) => {
       await ensureBound();
+      const removed = store.remove(id);
+      // Logged so metrics can see it at all: forget was the one tool call that
+      // left no trace, which made "never called" unfalsifiable.
+      if (removed) log("forget", id.slice(0, 8), { id: id.slice(0, 8) });
       return ({
       content: [{
         type: "text",
-        text: store.remove(id) ? `forgot ${id}` : `no memory ${id} — recall again for current ids`,
+        text: removed ? `forgot ${id}` : `no memory ${id} — recall again for current ids`,
       }],
     });
     },

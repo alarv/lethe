@@ -34,7 +34,12 @@ export function dynamicsMultiplier(m: Memory, paths: string[]): number {
   }
   // A memory borrowed from another repository is a fallback, not an answer.
   if (m.fromProject) mult *= 0.5;
-  return mult * m.strength;
+  // Strength counts for ranking only up to 1. Above that it can only have come
+  // from reinforcement, and while confirm goes uncalled reinforcement comes from
+  // retrieval alone -- so an uncapped multiplier let a memory rank on having
+  // ranked before. Weak memories still sink; popular ones no longer float.
+  // Decay and eviction still see the full value.
+  return mult * Math.min(m.strength, 1);
 }
 
 export function rank(

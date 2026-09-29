@@ -21,8 +21,15 @@
  *   3. Stay quiet when it has nothing. Silence is the correct output.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Store } from "./store.js";
-import { contentTerms, stem, terms } from "./query.js";
+import { contentTerms, relevantEnough, terms } from "./query.js";
+
+// Admission moved to query.ts so recall can apply the same floor; re-exported
+// because this is where it was first written and tested.
+export { documentFrequency, relevantEnough, termCoverage } from "./query.js";
 import { log } from "./log.js";
 
 /** Enough of a question to be worth searching for. */
@@ -41,37 +48,6 @@ const MAX_CHARS_EACH = 480;
  * than its whole body.
  */
 const MAX_CHARS_EPISODE = 200;
-/**
- * Distinct query terms a memory must contain to be injected.
- *
- * The reason this exists: the query is an OR of every term, so a single common
- * word is a hit. "what is the airspeed velocity of an unladen swallow" matched a
- * memory about embeddings, on the word "the". BM25 ranks such a match near zero
- * but ranking is not rejection, and nothing else here rejects. On a hook that
- * fires every turn, a near-zero match still costs real context.
- *
- * Coverage rather than a score threshold because absolute BM25 values are
- * corpus-dependent, so any constant would be wrong on somebody else's store.
- *
- * Counted over content terms only. A first attempt counted every term and let
- * the swallow query through anyway, on "what" plus "the" -- two stopwords are
- * two terms, and coverage that counts them measures nothing.
- */
-const MIN_TERM_COVERAGE = 2;
-/**
- * A term this rare in the store is evidence on its own.
- *
- * Requiring two terms unconditionally rejected "what did we decide about
- * embeddings": only "decide" and "embeddings" survive stopword removal, and the
- * memory says "Decision" rather than "decide". But "embeddings" appears in a
- * handful of memories out of dozens, so matching it is not a coincidence the way
- * matching "worked" would be.
- *
- * Expressed as a fraction of the store rather than a count, so it self-tunes
- * instead of encoding a guess about how big anyone's memory is. This is IDF used
- * for admission rather than for ranking.
- */
-const RARE_TERM_FRACTION = 0.25;
 /**
  * Strength added per hook-injected memory.
  *
@@ -96,42 +72,6 @@ function readStdin(): Promise<string> {
 }
 
 /**
- * How many distinct query terms this memory actually contains.
- *
- * Substring matching is right here even though it is wrong for ranking: the
- * question is whether the term is present at all, and the porter stemmer means
- * "running" in the query should count against "run" in the body.
- */
-export function termCoverage(text: string, queryTerms: string[]): number {
-  const haystack = text.toLowerCase();
-  let hit = 0;
-  for (const t of new Set(queryTerms.map(stem))) {
-    if (haystack.includes(t)) hit += 1;
-  }
-  return hit;
-}
-
-/**
- * How many memories in the store contain each term.
- *
- * Computed over the corpus rather than looked up in the index, because the hook
- * does not own the index connection and the bodies have already been read off
- * disk by the search that produced the candidates.
- */
-export function documentFrequency(
-  corpus: { title: string; body: string }[],
-  queryTerms: string[],
-): Map<string, number> {
-  const df = new Map<string, number>();
-  for (const t of new Set(queryTerms.map(stem))) {
-    let n = 0;
-    for (const m of corpus) if (`${m.title} ${m.body}`.toLowerCase().includes(t)) n += 1;
-    df.set(t, n);
-  }
-  return df;
-}
-
-/**
  * Distilled memory first, raw episodes only if there is nothing distilled.
  *
  * The ranker already gives claims a 1.5x boost, which decides ORDER. This
@@ -147,30 +87,6 @@ export function documentFrequency(
 export function preferDistilled<T extends { kind: string }>(found: T[]): T[] {
   const distilled = found.filter((m) => m.kind === "claim" || m.kind === "pattern");
   return distilled.length ? distilled : found;
-}
-
-/** Memories that share enough of the question to be worth the context. */
-export function relevantEnough<T extends { title: string; body: string }>(
-  found: T[],
-  queryTerms: string[],
-  corpus: { title: string; body: string }[] = [],
-): T[] {
-  const needed = Math.min(MIN_TERM_COVERAGE, queryTerms.length);
-  const df = corpus.length ? documentFrequency(corpus, queryTerms) : new Map<string, number>();
-  const rareCutoff = corpus.length * RARE_TERM_FRACTION;
-
-  return found.filter((m) => {
-    const text = `${m.title} ${m.body}`.toLowerCase();
-    let covered = 0;
-    let rareHit = false;
-    for (const t of new Set(queryTerms.map(stem))) {
-      if (!text.includes(t)) continue;
-      covered += 1;
-      const seen = df.get(t);
-      if (seen !== undefined && seen > 0 && seen <= rareCutoff) rareHit = true;
-    }
-    return covered >= needed || (covered >= 1 && rareHit);
-  });
 }
 
 function truncate(body: string, budget: number): string {
@@ -275,4 +191,55 @@ export async function promptHook(): Promise<void> {
       /* even logging is best-effort here */
     }
   }
+}
+
+/**
+ * Whether the host will run this hook at all.
+ *
+ * Measured on an organisation-managed machine: the hook was registered, worked
+ * when invoked by hand, and in six weeks never ran once -- because the managed
+ * policy set `allowManagedHooksOnly`, under which Claude Code skips every hook a
+ * user registers, silently. Nothing in lethe said so, and `hook show` went on
+ * promising the hook "removes that dependency" on a machine where it could not.
+ *
+ * This only reports. A policy an administrator set is not lethe's to route
+ * around; the fix is to ask for the hook to be deployed as a managed one.
+ */
+export interface HookPolicy {
+  blocked: boolean;
+  /** Which file said so, and which setting. */
+  reason?: string;
+}
+
+export function hookPolicy(sources: { path: string; settings: unknown }[]): HookPolicy {
+  for (const { path, settings } of sources) {
+    if (!settings || typeof settings !== "object") continue;
+    const s = settings as Record<string, unknown>;
+    if (s.disableAllHooks === true) return { blocked: true, reason: `${path} sets disableAllHooks` };
+    if (s.allowManagedHooksOnly === true) {
+      return { blocked: true, reason: `${path} sets allowManagedHooksOnly (organisation policy)` };
+    }
+  }
+  return { blocked: false };
+}
+
+/** The settings files Claude Code reads that can switch user hooks off. */
+export function readHookPolicy(): HookPolicy {
+  const claudeDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  const paths = [
+    join(claudeDir, "remote-settings.json"), // server-delivered managed policy
+    process.platform === "darwin"
+      ? "/Library/Application Support/ClaudeCode/managed-settings.json"
+      : "/etc/claude-code/managed-settings.json",
+    join(claudeDir, "settings.json"),
+  ];
+  const sources: { path: string; settings: unknown }[] = [];
+  for (const path of paths) {
+    try {
+      if (existsSync(path)) sources.push({ path, settings: JSON.parse(readFileSync(path, "utf8")) });
+    } catch {
+      /* unreadable or not JSON: says nothing either way */
+    }
+  }
+  return hookPolicy(sources);
 }

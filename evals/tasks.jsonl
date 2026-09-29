@@ -16,3 +16,9 @@
 {"id":"cache-1","scenario":"cache-invalidation","difficulty":"easy","category":"debugging","query":"stale prices after updating the catalogue"}
 {"id":"cache-2","scenario":"cache-invalidation","difficulty":"hard","category":"debugging","query":"api keeps serving old data even though the write succeeded"}
 {"id":"cache-3","scenario":"cache-invalidation","difficulty":"hard","category":"convention","query":"what do I need to remember when writing to the catalogue"}
+{"id":"neg-1","scenario":"","difficulty":"negative","category":"off-topic","query":"where is the release plan template for the api"}
+{"id":"neg-2","scenario":"","difficulty":"negative","category":"off-topic","query":"how do we handle personal data requests under GDPR"}
+{"id":"neg-3","scenario":"","difficulty":"negative","category":"off-topic","query":"which kafka topic does the pricing job publish to"}
+{"id":"neg-4","scenario":"","difficulty":"negative","category":"off-topic","query":"how do I rotate the CI deploy credentials"}
+{"id":"neg-5","scenario":"","difficulty":"negative","category":"off-topic","query":"who owns the install guide for new hires"}
+{"id":"neg-6","scenario":"","difficulty":"negative","category":"off-topic","query":"what update cadence do we follow for the mobile app"}

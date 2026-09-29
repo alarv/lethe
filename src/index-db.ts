@@ -23,7 +23,7 @@ import { existsSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { Memory } from "./store.js";
-import { matchExpression, terms } from "./query.js";
+import { matchExpression, stem, terms, type Frequencies } from "./query.js";
 import { log } from "./log.js";
 
 const SCHEMA_VERSION = 4;
@@ -300,6 +300,31 @@ export class MemoryIndex {
     const expr = matchExpression(query);
     if (expr === null) return [];
     return this.run(expr, limit);
+  }
+
+  /**
+   * How many indexed memories contain each term, and how many there are.
+   *
+   * For admission, not ranking: recall uses it to decide whether a single
+   * matching term is rare enough to count as evidence. Asked of the inverted
+   * index so recall never has to read the store to find out.
+   *
+   * Keyed by query.ts's stem() because that is what admission compares against.
+   * The index matches with its own porter stemmer, so the two can disagree at
+   * the edges; the count is a threshold input, and close is enough.
+   */
+  frequencies(words: string[]): Frequencies {
+    const total = Number(
+      this.db.prepare("SELECT count(*) AS n FROM memories").all()[0]?.n ?? 0,
+    );
+    const count = this.db.prepare("SELECT count(*) AS n FROM fts WHERE fts MATCH ?");
+    const df = new Map<string, number>();
+    for (const w of new Set(words)) {
+      const clean = terms(w)[0];
+      if (!clean) continue;
+      df.set(stem(clean), Number(count.all(`"${clean}"`)[0]?.n ?? 0));
+    }
+    return { total, df };
   }
 
   /** An exact adjacent phrase. This is why the index uses detail='full'. */

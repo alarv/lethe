@@ -26,16 +26,18 @@ const root = join(here, "..");
 interface Task {
   id: string;
   scenario: string;
-  difficulty: "easy" | "hard";
+  /** "negative" tasks have no answer in the store; anything returned is noise. */
+  difficulty: "easy" | "hard" | "negative";
   category: string;
   query: string;
 }
 
 type Condition = "cold" | "raw" | "compact" | "all";
 
-/** Which retrieval mechanism is under test. Both are reported: an improvement
- *  that cannot be attributed to one change is not a measurement. */
-type Mechanism = "naive" | "fts5";
+/** Which retrieval mechanism is under test. All are reported: an improvement
+ *  that cannot be attributed to one change is not a measurement. `recall` is
+ *  fts5 plus the relevance floor -- what the recall tool actually returns. */
+type Mechanism = "naive" | "fts5" | "recall";
 
 interface Result {
   condition: Condition;
@@ -48,6 +50,16 @@ interface Result {
   costToAnswer: number;
   /** Total size of the searchable store. */
   indexChars: number;
+  /**
+   * Of what came back for answerable tasks, the share from the right scenario.
+   *
+   * hit@k and MRR only ask whether the answer appeared. They cannot see a result
+   * list padded with unrelated memories, which is what real recalls looked like:
+   * always full, the same off-topic memory in every one.
+   */
+  precision: number;
+  /** Share of no-answer tasks that returned anything at all. Lower is better. */
+  offTopic: number;
   n: number;
 }
 
@@ -111,13 +123,24 @@ async function run(condition: Condition, tasks: Task[], mechanism: Mechanism): P
   try {
     const store = await buildStore(condition, home, workspace);
     let hit1 = 0, hit3 = 0, hit5 = 0, mrr = 0, cost = 0, answered = 0;
+    let precisionSum = 0, withHits = 0, negatives = 0, offTopic = 0;
     const indexChars = store.all().reduce(
       (n: number, m: { title: string; body: string }) => n + m.title.length + m.body.length, 0);
 
     for (const task of tasks) {
-      const hits = mechanism === "fts5"
-        ? store.search(task.query, K)
+      const hits = mechanism === "recall" ? store.recall(task.query, K)
+        : mechanism === "fts5" ? store.search(task.query, K)
         : store.searchNaive(task.query, K);
+
+      if (task.difficulty === "negative") {
+        negatives += 1;
+        if (hits.length) offTopic += 1;
+        continue;
+      }
+      if (hits.length) {
+        precisionSum += hits.filter((m: { tags: string[] }) => m.tags.includes(task.scenario)).length / hits.length;
+        withHits += 1;
+      }
       // Correct means "surfaced something from the right scenario". Scoring by
       // memory id would be unfair across conditions: the right answer is an
       // episode under raw and a claim under compact.
@@ -139,13 +162,16 @@ async function run(condition: Condition, tasks: Task[], mechanism: Mechanism): P
       }
     }
 
-    const n = tasks.length;
+    // Answerable tasks only, so adding no-answer tasks did not move the old numbers.
+    const n = tasks.length - negatives;
     return {
       condition,
       mechanism,
-      hit1: hit1 / n, hit3: hit3 / n, hit5: hit5 / n, mrr: mrr / n,
+      hit1: n ? hit1 / n : 0, hit3: n ? hit3 / n : 0, hit5: n ? hit5 / n : 0, mrr: n ? mrr / n : 0,
       costToAnswer: answered ? cost / answered : 0,
       indexChars,
+      precision: withHits ? precisionSum / withHits : 0,
+      offTopic: negatives ? offTopic / negatives : 0,
       n,
     };
   } finally {
@@ -175,13 +201,13 @@ function pct(x: number): string {
 
 function table(results: Result[], title: string): void {
   console.log(`\n${title}`);
-  console.log("  condition   hit@1  hit@3  hit@5    MRR   cost-to-answer   index");
-  console.log("  ──────────────────────────────────────────────────────────────────");
+  console.log("  condition   hit@1  hit@3  hit@5    MRR   cost-to-answer   index   precision  off-topic");
+  console.log("  ────────────────────────────────────────────────────────────────────────────────────────");
   for (const r of results) {
     console.log(
       `  ${r.condition.padEnd(9)}  ${pct(r.hit1)}   ${pct(r.hit3)}   ${pct(r.hit5)}  ` +
         `${r.mrr.toFixed(2)}   ${String(Math.round(r.costToAnswer)).padStart(12)}   ` +
-        `${String(r.indexChars).padStart(5)}`,
+        `${String(r.indexChars).padStart(5)}   ${pct(r.precision).padStart(9)}  ${pct(r.offTopic).padStart(9)}`,
     );
   }
 }
@@ -201,6 +227,7 @@ function verdict(overall: Result[], mechanism: Mechanism): void {
   );
   const shrink = 1 - compact.indexChars / raw.indexChars;
   console.log(`  index ${(shrink * 100).toFixed(0)}% smaller (${raw.indexChars} -> ${compact.indexChars} chars)`);
+  console.log(`  noise ${pct(compact.precision).trim()} of compact results relevant, ${pct(compact.offTopic).trim()} of no-answer queries got an answer anyway`);
   if (delta < 0 && cheaper <= 0) {
     console.log("\n  Compaction loses on both axes. That is the thesis failing, not a tuning problem.");
   } else if (delta < 0) {
@@ -212,13 +239,16 @@ async function main(): Promise<void> {
   const all = loadTasks();
   const conditions: Condition[] = ["cold", "raw", "compact", "all"];
   const asked = process.argv.find((a) => a.startsWith("--retrieval="))?.split("=")[1] ?? "both";
-  const mechanisms: Mechanism[] = asked === "both" ? ["naive", "fts5"] : [asked as Mechanism];
+  const mechanisms: Mechanism[] = asked === "both" || asked === "all"
+    ? ["naive", "fts5", "recall"] : [asked as Mechanism];
 
   console.log(`lethe retrieval eval — ${all.length} tasks, top-${K}`);
   console.log("compact vs raw is the comparison that matters; cold is the floor.");
 
   for (const mechanism of mechanisms) {
     const overall = await runAll(conditions, all, mechanism);
+    // "all tasks" includes the no-answer ones: hit@k and MRR skip them, and the
+    // off-topic column is computed from nothing else.
     table(overall, `all tasks — ${mechanism}`);
     for (const d of ["easy", "hard"] as const) {
       const subset = all.filter((t) => t.difficulty === d);
