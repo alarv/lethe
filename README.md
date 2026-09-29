@@ -140,6 +140,11 @@ whatever it finds is already in context:
 lethe hook show      # prints a hook config to add to your host
 ```
 
+If your organisation manages Claude Code with `allowManagedHooksOnly`, hooks you add
+yourself are skipped without an error, so this one will never run. `lethe doctor` and
+`lethe hook show` check for that and say so; the fix is to have an administrator deploy
+the hook as a managed one.
+
 opencode gets the same via [`plugins/opencode.js`](plugins/opencode.js).
 
 ## What it does

@@ -14,7 +14,7 @@ function pressureThreshold(): number {
   const n = Number(process.env.LETHE_PRESSURE);
   return Number.isFinite(n) && n > 0 ? n : 6;
 }
-import { promptHook } from "./hook.js";
+import { promptHook, readHookPolicy } from "./hook.js";
 import { PLACEMENTS, choose } from "./prompt.js";
 import { claimSharing, globalConfigPath, ignoreInGit, shareDefault, staleConfig, staleRootIgnore, writeConfig } from "./config.js";
 import { serve } from "./server.js";
@@ -153,6 +153,14 @@ async function main(): Promise<void> {
         // Printed rather than written. Editing someone's settings.json without
         // being asked is not a thing a memory tool should do on its own.
         const bin = process.argv[1] ?? "lethe";
+        const policy = readHookPolicy();
+        if (policy.blocked) {
+          console.log(`Claude Code will not run this hook here: ${policy.reason}.
+Under that setting only hooks an administrator deploys are run, and any you add
+yourself are skipped without an error. Ask whoever manages Claude Code for your
+organisation to deploy the command below as a managed hook.
+`);
+        }
         console.log(`Add this to ~/.claude/settings.json to have every prompt recall first:
 
   {
@@ -283,6 +291,19 @@ whether this is what moved adoption.`);
             "  `lethe init --private` if they were never meant to be.",
           );
         }
+      }
+
+      // A hook the host will never run looks exactly like one nobody triggered,
+      // and this cost six weeks of measuring "zero organic firings" before the
+      // managed policy was found.
+      const policy = readHookPolicy();
+      console.log(`${ok(!policy.blocked)} hook       ${policy.blocked ? `blocked: ${policy.reason}` : "not blocked by policy"}`);
+      if (policy.blocked) {
+        problems.push(
+          "User hooks are switched off by policy, so the prompt hook cannot run and\n" +
+          "  recall depends on the model choosing to call it. Ask your Claude Code\n" +
+          "  administrator to deploy `lethe hook show`'s command as a managed hook.",
+        );
       }
 
       // Probing costs a few `which` calls and a 1.5s reach for ollama, which

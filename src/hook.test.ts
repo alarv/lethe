@@ -186,3 +186,17 @@ test("a claims-only block does not mention excerpting", () => {
   const out = renderMemories([mem({ kind: "claim", body: "short and complete" })]);
   assert.doesNotMatch(out, /excerpted/);
 });
+
+import { hookPolicy } from "./hook.js";
+
+test("an organisation policy allowing only managed hooks blocks the prompt hook", () => {
+  const p = hookPolicy([{ path: "remote-settings.json", settings: { allowManagedHooksOnly: true } }]);
+  assert.equal(p.blocked, true);
+  assert.match(p.reason ?? "", /allowManagedHooksOnly/, "and says which setting, so nobody has to go hunting");
+});
+
+test("disableAllHooks blocks it too; absent or false settings do not", () => {
+  assert.equal(hookPolicy([{ path: "settings.json", settings: { disableAllHooks: true } }]).blocked, true);
+  assert.equal(hookPolicy([{ path: "settings.json", settings: { allowManagedHooksOnly: false } }]).blocked, false);
+  assert.equal(hookPolicy([{ path: "x", settings: null }, { path: "y", settings: {} }]).blocked, false);
+});

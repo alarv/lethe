@@ -9,6 +9,51 @@ still move.
 
 The release workflow refuses to publish a version with no section here.
 
+## [0.1.3] - 2026-09-29
+
+### Fixed
+
+- **A memory could rank on having ranked before.** Every recall added 0.1 strength to every
+  hit it returned, and strength multiplies the ranking score, so whatever came back once
+  ranked higher and came back again. Measured over two weeks of real use: the three
+  strongest memories in one project had each been reinforced about once per recall, and one
+  of them — about async suspension points — was in all 8 real recalls, including questions
+  about GDPR and a Confluence template. With `confirm` never called, retrieval was the only
+  source of strength, so the loop had nothing to check it. Recall now reinforces at 0.02,
+  the same as the prompt hook, and ranking counts strength only up to 1; decay and eviction
+  still see the full value. On a replay of those 8 recalls against a copy of the store, that
+  memory appears in 3.
+
+- **Recall always filled its limit.** There was no relevance floor anywhere: the MATCH is an
+  OR of every term, so one shared word was a hit and every real recall returned exactly 8.
+  Recall now applies the prompt hook's admission rule — two content terms, or one term rare
+  in the store — to every hit but the first. Flooring the first too was measured and
+  rejected: it dropped right answers on paraphrased questions (compact MRR 0.94 -> 0.78).
+  As shipped: precision 42% -> 75%, MRR 0.94 -> 0.89. The frequencies come from the index,
+  not from reading the store, so recall stays O(hits).
+
+- **`lethe metrics` counted sessions nobody opened.** A compaction's distiller subprocess
+  starts a server and logs a refusal; each one was counted as a session (25 of 141) and began
+  a new one that swallowed the parent's following events. And any log line marked a session
+  as having used lethe, including compaction's own housekeeping — reporting 63% adoption where
+  the model had called lethe in 40%. Refusals are skipped now, only tool calls count as use,
+  and the row is renamed "called a lethe tool" to say so. `forget` is logged, so it can be
+  counted at all.
+
+- **The prompt hook could be switched off by policy with no sign of it.** Under an organisation
+  policy of `allowManagedHooksOnly`, Claude Code skips every hook a user registers, silently.
+  On the machine lethe is dogfooded on, that is why the hook ran zero times in six weeks while
+  working perfectly when invoked by hand. `lethe doctor` now reports it and names the setting;
+  `lethe hook show` warns before printing a config that cannot run. lethe does not work around
+  the policy — the fix is for an administrator to deploy the hook as a managed one.
+
+### Changed
+
+- **The eval can see noise.** hit@k and MRR only ask whether the answer appeared, so a
+  result list padded with unrelated memories scored the same as a clean one. Added six
+  no-answer tasks, precision and off-topic columns, and a `recall` mechanism for what the
+  tool actually returns; existing rows are unchanged. See docs/evals.md.
+
 ## [0.1.2] - 2026-09-15
 
 ### Changed
@@ -429,7 +474,8 @@ proven** — see [`docs/evals.md`](docs/evals.md).
   The one place they would earn their cost is grouping episodes; see
   [`docs/architecture.md`](docs/architecture.md).
 
-[Unreleased]: https://github.com/alarv/lethe/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/alarv/lethe/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/alarv/lethe/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/alarv/lethe/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/alarv/lethe/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/alarv/lethe/compare/v0.0.2...v0.1.0
