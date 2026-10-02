@@ -28,7 +28,7 @@ import { seeded } from "./learn.js";
 import { type Candidate, harvest } from "./harvest.js";
 import { spinning } from "./progress.js";
 import { badge, c, logLine } from "./color.js";
-import { consent, due, endpoint, flush } from "./telemetry.js";
+import { DEFAULT_ENDPOINT, consent, due, endpoint, flush } from "./telemetry.js";
 
 const TELEMETRY_CHOICES = [
   { label: "yes", detail: "send anonymous daily counts -- numbers only, `lethe telemetry` shows them" },
@@ -526,7 +526,10 @@ whether this is what moved adoption.`);
       const { state, why } = consent();
       const url = endpoint();
       console.log(`${c.cyan("telemetry")}  ${state === "on" ? c.green("on") : c.dim("off")} ${c.dim(`(${why})`)}`);
-      console.log(`${c.cyan("endpoint")}   ${url || c.yellow("none -- this build has nowhere to send to, so nothing is sent")}`);
+      // Shown only when it is not the default: an override is worth confirming,
+      // a missing one explains why nothing is sent. The default is in the README.
+      if (!url) console.log(`${c.cyan("endpoint")}   ${c.yellow("none -- this build has nowhere to send to, so nothing is sent")}`);
+      else if (url !== DEFAULT_ENDPOINT) console.log(`${c.cyan("endpoint")}   ${url} ${c.dim("(LETHE_TELEMETRY_URL)")}`);
       if (state === "on" && arg === "on" && (process.env.DO_NOT_TRACK || process.env.LETHE_TELEMETRY === "0")) {
         console.log("           your environment overrides the setting");
       }
