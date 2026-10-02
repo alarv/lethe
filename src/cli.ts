@@ -27,6 +27,7 @@ import { describeDistiller, resolveDistiller } from "./distil.js";
 import { seeded } from "./learn.js";
 import { type Candidate, harvest } from "./harvest.js";
 import { spinning } from "./progress.js";
+import { badge, c, logLine } from "./color.js";
 import { consent, due, endpoint, flush } from "./telemetry.js";
 
 const TELEMETRY_CHOICES = [
@@ -253,7 +254,7 @@ whether this is what moved adoption.`);
     }
 
     case "doctor": {
-      const ok = (b: boolean) => (b ? "ok  " : "FAIL");
+      const ok = (b: boolean) => badge(b ? "ok" : "FAIL");
       const lines = tail(500);
       const problems: string[] = [];
 
@@ -261,14 +262,14 @@ whether this is what moved adoption.`);
       console.log(`${ok(true)} claims     ${claimDir()}`);
       console.log(`${ok(true)} episodes   ${episodeDir()}`);
       if (!root) {
-        console.log(`     note       not a git repo; both are keyed to this directory`);
+        console.log(`     ${c.dim("note       not a git repo; both are keyed to this directory")}`);
       }
 
       // The removed `scope` setting is the last thing that can make someone
       // believe their memory is somewhere it is not.
       const staleScope = staleConfig();
       if (staleScope.length) {
-        console.log(`warn config     ${staleScope.length} file(s) still set \`scope\``);
+        console.log(`${badge("warn")} config     ${staleScope.length} file(s) still set \`scope\``);
         problems.push(
           "A config file still sets `scope`, which no longer exists. Where a memory\n" +
           "  goes is derived from what it is, and sharing is decided by\n" +
@@ -280,12 +281,12 @@ whether this is what moved adoption.`);
       // The home directory is the one thing here that grows unattended, so
       // doctor reports its size and names anything dead in it.
       const sw = survey();
-      console.log(`ok   home       ${human(sw.totalBytes)} in ${letheHome()}` +
+      console.log(`${badge("ok")} home       ${human(sw.totalBytes)} in ${letheHome()}` +
         `  (${sw.live.length} project(s), index ${human(sw.indexBytes)}` +
         `${sw.logBytes ? `, log ${human(sw.logBytes)}` : ""})`);
       if (sw.orphaned.length) {
         const memories = sw.orphaned.reduce((n, o) => n + o.files, 0);
-        console.log(`warn projects   ${sw.orphaned.length} keyed to a path that is gone, holding ${memories} memory(ies)`);
+        console.log(`${badge("warn")} projects   ${sw.orphaned.length} keyed to a path that is gone, holding ${memories} memory(ies)`);
         problems.push(
           `${sw.orphaned.length} project director(ies) are keyed to a path that no longer\n` +
           "  exists, but still hold memories, so nothing was removed automatically --\n" +
@@ -303,7 +304,7 @@ whether this is what moved adoption.`);
       if (root) {
         const sh = claimSharing(root);
         const warn = sh.state === "untracked";
-        console.log(`${warn ? "warn" : "ok  "} sharing    ${
+        console.log(`${badge(warn ? "warn" : "ok")} sharing    ${
           sh.state === "shared" ? `${sh.tracked} claim(s) committed`
           : sh.state === "ignored" ? "git-ignored, private to you"
           : sh.state === "untracked" ? `${sh.files} claim(s) written but never committed`
@@ -355,7 +356,7 @@ whether this is what moved adoption.`);
         console.log("     activity   not recorded (logging is off)");
         console.log("                `lethe init --debug` to record adoption, then re-run this");
         console.log("");
-        for (const p of problems) console.log(`- ${p}`);
+        for (const p of problems) console.log(`${c.yellow("-")} ${p}`);
         if (!problems.length) console.log("No problems found.");
         return;
       }
@@ -397,7 +398,7 @@ whether this is what moved adoption.`);
       const withContent = orphans.filter(([, st]) =>
         existsSync(st) && readdirSync(st).some((f) => f.endsWith(".md")));
 
-      const bindState = withContent.length ? "FAIL" : orphans.length ? "warn" : "ok  ";
+      const bindState = badge(withContent.length ? "FAIL" : orphans.length ? "warn" : "ok");
       console.log(`${bindState} binding    ${seen.size} workspace(s)${orphans.length ? `, ${orphans.length} outside a repo` : ""}`);
       if (withContent.length) {
         problems.push(
@@ -414,11 +415,11 @@ whether this is what moved adoption.`);
       }
 
       if (!problems.length) {
-        console.log("\nNo problems found.");
+        console.log(`\n${c.green("No problems found.")}`);
         return;
       }
       console.log("");
-      for (const p of problems) console.log(`- ${p}`);
+      for (const p of problems) console.log(`${c.yellow("-")} ${p}`);
       return;
     }
 
@@ -427,21 +428,24 @@ whether this is what moved adoption.`);
       const by = (k: string) => all.filter((m) => m.kind === k && !m.supersededBy).length;
       const episodes = by("episode");
       const lines = tail(500);
-      const last = (e: string) => [...lines].reverse().find((l) => l.includes(` ${e} `));
+      const last = (e: string) => [...lines].reverse().find((l) => l.includes(` ${e} `) &&
+        // briefed and client are start lines too; the connection is the one that dates a server
+        (e !== "start" || l.includes("mcp server connected")));
+      const key = (k: string) => c.cyan(k.padEnd(10));
 
-      console.log(`memories   ${all.length}  (${episodes} episode, ${by("claim")} claim, ${by("pattern")} pattern)`);
+      console.log(`${key("memories")} ${all.length}  (${episodes} episode, ${by("claim")} claim, ${by("pattern")} pattern)`);
       const threshold = pressureThreshold();
       const pressure = store.all()
         .filter((m) => m.kind === "episode" && !m.supersededBy)
         .reduce((sum, m) => sum + m.salience, 0);
       console.log(
-        `pressure   ${pressure.toFixed(1)}/${threshold} salience across ${episodes} raw episode(s)` +
-          `${pressure >= threshold ? " — compaction due" : ""}`,
+        `${key("pressure")} ${pressure.toFixed(1)}/${threshold} salience across ${episodes} raw episode(s)` +
+          `${pressure >= threshold ? c.yellow(" — compaction due") : ""}`,
       );
-      console.log(`claims     ${claimDir()}`);
-      console.log(`episodes   ${episodeDir()}`);
-      console.log(`log        ${logging() ? LOG_PATH : "off (`lethe init --debug` to record activity)"}`);
-      console.log(`distiller  ${await describeDistiller()}`);
+      console.log(`${key("claims")} ${claimDir()}`);
+      console.log(`${key("episodes")} ${episodeDir()}`);
+      console.log(`${key("log")} ${logging() ? LOG_PATH : "off (`lethe init --debug` to record activity)"}`);
+      console.log(`${key("distiller")} ${await describeDistiller()}`);
       console.log("");
       if (!lines.length) {
         console.log("No activity logged yet.");
@@ -454,7 +458,7 @@ whether this is what moved adoption.`);
       if (lastStart) {
         const m = /build=(\S+)/.exec(lastStart);
         if (m && m[1] !== buildStamp()) {
-          console.log(`WARNING  the running server is older than the built code.`);
+          console.log(`${c.bold(c.yellow("WARNING"))}  the running server is older than the built code.`);
           console.log(`         restart your harness, or it keeps using the old version.`);
           console.log("");
         }
@@ -462,7 +466,7 @@ whether this is what moved adoption.`);
       for (const [label, ev] of [["server start", "start"], ["last recall", "recall"], ["last note", "note"], ["last compact", "compact"]] as const) {
         const l = last(ev);
         // log line: <24-char ISO><2sp><8-char event><2sp><detail>
-        console.log(`${label.padEnd(13)} ${l ? `${l.slice(0, 19)}  ${l.slice(36)}` : "never"}`);
+        console.log(`${c.cyan(label.padEnd(13))} ${l ? `${c.dim(l.slice(0, 19))}  ${l.slice(36)}` : c.dim("never")}`);
       }
       return;
     }
@@ -471,7 +475,7 @@ whether this is what moved adoption.`);
       const i = rest.indexOf("-n");
       const n = i >= 0 ? Number(rest[i + 1] ?? 40) : 40;
       const lines = tail(n);
-      console.log(lines.length ? lines.join("\n") : `nothing logged yet (${LOG_PATH})`);
+      console.log(lines.length ? lines.map(logLine).join("\n") : `nothing logged yet (${LOG_PATH})`);
       if (!rest.includes("-f")) return;
       if (!logging()) {
         console.error("logging is off, so there is nothing to follow. `lethe init --debug` turns it on;");
@@ -488,7 +492,8 @@ whether this is what moved adoption.`);
         try {
           const buf = Buffer.alloc(cur.size - offset);
           readSync(fd, buf, 0, buf.length, offset);
-          process.stdout.write(buf.toString("utf8"));
+          process.stdout.write(buf.toString("utf8").split(/(?<=\n)/).map((l) =>
+            l.endsWith("\n") ? logLine(l.slice(0, -1)) + "\n" : logLine(l)).join(""));
         } finally {
           closeSync(fd);
         }
@@ -520,8 +525,8 @@ whether this is what moved adoption.`);
       }
       const { state, why } = consent();
       const url = endpoint();
-      console.log(`telemetry  ${state === "on" ? "on" : "off"} (${why})`);
-      console.log(`endpoint   ${url || "none -- this build has nowhere to send to, so nothing is sent"}`);
+      console.log(`${c.cyan("telemetry")}  ${state === "on" ? c.green("on") : c.dim("off")} ${c.dim(`(${why})`)}`);
+      console.log(`${c.cyan("endpoint")}   ${url || c.yellow("none -- this build has nowhere to send to, so nothing is sent")}`);
       if (state === "on" && arg === "on" && (process.env.DO_NOT_TRACK || process.env.LETHE_TELEMETRY === "0")) {
         console.log("           your environment overrides the setting");
       }
@@ -852,7 +857,8 @@ whether this is what moved adoption.`);
       for (const m of all.sort((a, b) => b.updated.localeCompare(a.updated))) {
         const dead = m.supersededBy ? " (superseded)" : "";
         console.log(
-          `${m.id.slice(0, 8)}  ${m.kind.padEnd(8)}  s=${m.strength.toFixed(2)}  ${m.title}${dead}`,
+          `${c.dim(m.id.slice(0, 8))}  ${(m.kind === "episode" ? c.dim : m.kind === "pattern" ? c.magenta : c.cyan)(m.kind.padEnd(8))}  ` +
+            `${c.dim(`s=${m.strength.toFixed(2)}`)}  ${m.supersededBy ? c.dim(m.title + dead) : m.title}`,
         );
       }
       return;
@@ -869,7 +875,7 @@ whether this is what moved adoption.`);
       }
       for (const m of hits) {
         const from = m.fromProject ? `  (from ${m.fromProject})` : "";
-        console.log(`\n[${m.id.slice(0, 8)}] ${m.title}${from}`);
+        console.log(`\n${c.dim(`[${m.id.slice(0, 8)}]`)} ${c.bold(m.title)}${c.dim(from)}`);
         if (m.body) console.log(m.body.split("\n").map((l) => `  ${l}`).join("\n"));
       }
       return;

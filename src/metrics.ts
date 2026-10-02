@@ -11,6 +11,7 @@
  * in sync, and it works retroactively on history already recorded.
  */
 
+import { c as col, heading, note as paintNote } from "./color.js";
 import { existsSync, readFileSync } from "node:fs";
 import { LOG_PATH } from "./log.js";
 
@@ -271,9 +272,9 @@ export function composition(
 
 export function formatComposition(c: Composition, threshold = 6): string {
   const distilled = c.claims + c.patterns;
-  const lines = ["", "consolidation — what the index actually has to serve"];
+  const lines = ["", heading("consolidation — what the index actually has to serve")];
   const row = (label: string, value: string, note = "") =>
-    lines.push(`  ${label.padEnd(26)} ${value.padStart(9)}   ${note}`);
+    lines.push(`  ${label.padEnd(26)} ${col.bold(value.padStart(9))}   ${note === "" ? "" : paintNote(note)}`);
 
   row("claims + patterns", String(distilled), c.superseded ? `live; ${c.superseded} more superseded` : "");
   row("episodes", String(c.episodes), `${c.waiting} raw, ${c.cold} cold`);
@@ -314,14 +315,14 @@ export function formatMetrics(m: Metrics, now: Date = new Date()): string {
   }
   const lines: string[] = [];
   const row = (label: string, value: string, note = "") =>
-    lines.push(`  ${label.padEnd(26)} ${value.padStart(9)}   ${note}`);
+    lines.push(`  ${label.padEnd(26)} ${col.bold(value.padStart(9))}   ${note === "" ? "" : paintNote(note)}`);
 
   const day = (ts: string) => ts.slice(0, 10);
   // A range, not "since": the end of the window is the part that gets misread.
   const window = m.since && m.until
     ? ` — ${day(m.since)} to ${day(m.until)}`
     : m.since ? ` — since ${day(m.since)}` : "";
-  lines.push(`lethe metrics${window}`);
+  lines.push(col.bold(`lethe metrics${window}`));
 
   const staleFor = m.until
     ? Math.floor((now.getTime() - new Date(m.until).getTime()) / 86_400_000)
@@ -335,7 +336,7 @@ export function formatMetrics(m: Metrics, now: Date = new Date()): string {
     lines.push("  keeps the config it started with.");
   }
   lines.push("");
-  lines.push("adoption — the number that decides whether anything else matters");
+  lines.push(heading("adoption — the number that decides whether anything else matters"));
   row("sessions connected", String(m.sessions));
   row("called a lethe tool", `${m.sessionsUsing}`, pct(m.sessionsUsing, m.sessions));
   row("called recall", `${m.sessionsRecalling}`, pct(m.sessionsRecalling, m.sessions));
@@ -343,7 +344,7 @@ export function formatMetrics(m: Metrics, now: Date = new Date()): string {
     pct(m.sessions - m.sessionsUsing, m.sessions));
 
   lines.push("");
-  lines.push("balance — memory should be read far more often than written");
+  lines.push(heading("balance — memory should be read far more often than written"));
   row("recalls", String(m.recalls),
     m.recallsViaHook ? `${m.recallsViaHook} via hook, ${m.recalls - m.recallsViaHook} by the model` : "all by the model");
   row("notes", String(m.notes));
@@ -351,7 +352,7 @@ export function formatMetrics(m: Metrics, now: Date = new Date()): string {
     m.notes && m.recalls / m.notes < 1 ? "<- backwards" : "");
 
   lines.push("");
-  lines.push("consolidation");
+  lines.push(heading("consolidation"));
   row("compaction runs", String(m.compactions),
     m.compactions === 0 ? "<- never produced a claim" : "");
   row("distiller failures", String(m.compactionsFailed),
@@ -361,7 +362,7 @@ export function formatMetrics(m: Metrics, now: Date = new Date()): string {
     m.claimsRejected > m.claimsKept ? "<- the evidence gate rejects more than it keeps" : "");
 
   lines.push("");
-  lines.push("retrieval");
+  lines.push(heading("retrieval"));
   row("recalls returning nothing", String(m.emptyRecalls), pct(m.emptyRecalls, m.recalls));
   row("mean hits when non-empty", m.meanHits.toFixed(1));
   row("confirmed after a recall", String(m.confirmedAfterRecall),

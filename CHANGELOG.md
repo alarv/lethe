@@ -39,6 +39,8 @@ The release workflow refuses to publish a version with no section here.
   side by side, such as subagents starting seconds apart, gave one start every event and
   counted the rest as never touching lethe. Log lines now carry `pid=` and events go to the
   server that wrote them. Older lines without one fall back to the old rule.
+- **`lethe status` dated the server from the wrong line.** "server start" showed the latest
+  `start` line, which is now usually a briefing, instead of the connection.
 - **`lethe metrics` compared rejected claims against successful runs.** One run can keep two
   claims and reject five, so it printed "the distiller fails more than it succeeds" over a
   log where it had not. Claims kept and claims rejected are now counted against each other,
@@ -60,6 +62,10 @@ The release workflow refuses to publish a version with no section here.
   is called, but do not need the log to be on. The collector, a Cloudflare Worker plus
   D1 in `telemetry/`, refuses anything that is not that exact shape. It runs at
   `https://lethe-telemetry.alarvfm.workers.dev`.
+- **Colour in the CLI.** `doctor` verdicts are green, yellow or red. `status`, `metrics`,
+  `ls`, `recall`, `telemetry` and `log` (including `log -f`, coloured by event) set labels,
+  figures and warnings apart. Only on a terminal: piped output, `NO_COLOR` and `TERM=dumb`
+  stay plain, and `FORCE_COLOR` forces it on.
 - **The MCP server reports its real version** instead of a hardcoded `0.0.1`.
 - **`lethe brief`** prints exactly what a session started in this directory is told.
 - **`lethe log -f`** follows the activity log live across every session.
