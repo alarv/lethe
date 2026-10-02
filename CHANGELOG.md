@@ -11,6 +11,8 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-02
+
 ### Fixed
 
 - **`lethe metrics` could report more cold episodes than episodes.** The cold count took
@@ -538,7 +540,8 @@ proven** — see [`docs/evals.md`](docs/evals.md).
   The one place they would earn their cost is grouping episodes; see
   [`docs/architecture.md`](docs/architecture.md).
 
-[Unreleased]: https://github.com/alarv/lethe/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/alarv/lethe/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/alarv/lethe/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/alarv/lethe/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/alarv/lethe/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/alarv/lethe/compare/v0.1.0...v0.1.1
