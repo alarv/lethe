@@ -16,6 +16,9 @@ The release workflow refuses to publish a version with no section here.
 - **`lethe <command> --help` ran the command.** No command looked for `--help`, so it was
   ignored like any unknown flag, and `lethe init --help` went ahead and initialised. `--help`
   and `-h` now print that command's usage and exit before anything runs.
+- **`lethe init` said memory was empty in a project holding notes.** It counted only claims
+  seeded by `learn`, so eight earned notes and no seeds printed "memory empty". It now
+  counts everything stored and says how much of it was seeded.
 
 ## [0.2.0] - 2026-10-02
 

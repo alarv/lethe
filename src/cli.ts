@@ -733,9 +733,17 @@ whether this is what moved adoption.`);
       // CI where init must stay instant and headless.
       console.log("");
       const already = seeded(store);
+      // Everything stored here, not just seeds: counting seeds alone told a
+      // project holding eight earned notes that its memory was empty.
+      const live = store.all().filter((m) => !m.supersededBy);
       if (already.length) {
-        console.log(`memory    ${already.length} claim(s) already seeded from this repo.`);
-        console.log("          `lethe learn` lists them and how strong they still are.");
+        console.log(`memory    ${live.length} memor${live.length === 1 ? "y" : "ies"}, ` +
+          `${already.length} of them seeded from this repo.`);
+        console.log("          `lethe learn` lists the seeds and how strong they still are.");
+      } else if (live.length) {
+        console.log(`memory    ${live.length} memor${live.length === 1 ? "y" : "ies"} recorded, none seeded from the repo.`);
+        console.log("          to add how-to-work-here facts (build, test, CI), ask your agent");
+        console.log("          to call lethe's `learn` tool.");
       } else {
         console.log("memory    empty. An empty store does not fail neutrally -- it teaches the");
         console.log("          agent that recall does not pay, and by the third session it has");
