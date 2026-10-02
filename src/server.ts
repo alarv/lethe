@@ -15,6 +15,7 @@ import { Store, author, claimDir, episodeDir, type Memory } from "./store.js";
 import { compact, type Distiller } from "./compact.js";
 import { repairLeakedArgs } from "./repair.js";
 import { type Brief, brief } from "./brief.js";
+import { flush, version } from "./telemetry.js";
 import { buildStamp, log } from "./log.js";
 import { logResolved, resolveDistiller } from "./distil.js";
 import { LEARN_INSTRUCTIONS, gate, seed, seeded, writeWatermark } from "./learn.js";
@@ -106,7 +107,13 @@ export function createServer(cwd = process.cwd()): McpServer {
       ids: briefing.listed.map((m) => m.id.slice(0, 8)).join(","),
     });
   }
-  const server = new McpServer({ name: "lethe", version: "0.0.1" }, { instructions });
+  const server = new McpServer({ name: "lethe", version: version() }, { instructions });
+  // Which kind of host connected. Logged raw for the local log; telemetry maps
+  // it onto a fixed list before it could ever leave the machine.
+  server.server.oninitialized = () => {
+    const host = server.server.getClientVersion()?.name;
+    if (host) log("start", "client", { host });
+  };
 
   /**
    * Bind the store to the workspace the client is actually in.
@@ -446,4 +453,6 @@ export async function serve(): Promise<void> {
     store: claimDir(),
     build: buildStamp(),
   });
+  // Off the latency path and silent on failure; a no-op unless opted in.
+  void flush().catch(() => {});
 }

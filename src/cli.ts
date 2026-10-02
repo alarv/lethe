@@ -27,6 +27,28 @@ import { describeDistiller, resolveDistiller } from "./distil.js";
 import { seeded } from "./learn.js";
 import { type Candidate, harvest } from "./harvest.js";
 import { spinning } from "./progress.js";
+import { consent, due, endpoint, flush } from "./telemetry.js";
+
+const TELEMETRY_CHOICES = [
+  { label: "yes", detail: "send anonymous daily counts -- numbers only, `lethe telemetry` shows them" },
+  { label: "no", detail: "send nothing; you will not be asked again" },
+];
+
+/** The one time anyone is asked. Interactive only; never from the MCP server. */
+async function askTelemetry(): Promise<void> {
+  if (!process.stdin.isTTY || consent().state !== "unasked" || !endpoint()) return;
+  console.log("");
+  console.log("one more question, asked once. lethe can send a daily summary of how it is");
+  console.log("used -- counts of sessions, recalls, notes and consolidations, the version, and");
+  console.log("the kind of host. Never a query, memory, path, repository or name.");
+  console.log("");
+  const pick = await choose("send anonymous usage counts?", TELEMETRY_CHOICES);
+  if (pick === null) return; // cancelled: still unasked, still off
+  writeConfig(globalConfigPath(), { telemetry: pick === 0 });
+  console.log(pick === 0
+    ? "\nthank you. `lethe telemetry off` stops it at any time."
+    : "\nnothing will be sent. `lethe telemetry on` if you change your mind.");
+}
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
 
@@ -45,6 +67,8 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
   lethe hook show              print the hook config to add to settings.json
   lethe log [-n N] [-f]        recent activity; -f keeps following it live
   lethe brief                  what a session started here is told before its first prompt
+  lethe telemetry [on|off]     anonymous usage counts: whether they are sent, and exactly what
+       [send]                  send completed days now instead of at the next session
   lethe eval candidates        harvest real (query, confirmed memory) pairs for evals/
   lethe init                   decide if this project's claims are committed
        [--share] [--private]   answer up front instead of being asked
@@ -311,6 +335,11 @@ whether this is what moved adoption.`);
       // until now happened in silence in the middle of doctor's output.
       const d = await spinning("looking for a model", () => resolveDistiller());
       console.log(`${ok(!!d)} distiller  ${d ? d.via : "none"}`);
+      {
+        const t = consent();
+        console.log(`${ok(true)} telemetry  ${t.state === "on" ? "on" : "off"} (${t.why})` +
+          (t.state === "on" && !endpoint() ? "; no endpoint in this build, so nothing is sent" : ""));
+      }
       if (!d) {
         problems.push(
           "No model available, so consolidation cannot run and episodes will\n" +
@@ -468,6 +497,49 @@ whether this is what moved adoption.`);
       return;
     }
 
+    case "telemetry": {
+      const arg = rest[0];
+      if (arg === "send") {
+        const before = due();
+        if (consent().state !== "on" || !endpoint()) {
+          console.error(`nothing sent: telemetry is ${consent().state === "on" ? "on but has no endpoint" : "off"}.`);
+          process.exit(1);
+        }
+        const r = await flush();
+        console.log(`sent ${r.sent} of ${before.length} completed day(s) to ${endpoint()}`);
+        if (r.sent < before.length) {
+          console.log("the rest stay pending and are retried at the next session; is the endpoint reachable?");
+        }
+        return;
+      }
+      if (arg === "on" || arg === "off") {
+        writeConfig(globalConfigPath(), { telemetry: arg === "on" });
+      } else if (arg) {
+        console.error("usage: lethe telemetry [on|off|send]");
+        process.exit(1);
+      }
+      const { state, why } = consent();
+      const url = endpoint();
+      console.log(`telemetry  ${state === "on" ? "on" : "off"} (${why})`);
+      console.log(`endpoint   ${url || "none -- this build has nowhere to send to, so nothing is sent"}`);
+      if (state === "on" && arg === "on" && (process.env.DO_NOT_TRACK || process.env.LETHE_TELEMETRY === "0")) {
+        console.log("           your environment overrides the setting");
+      }
+      console.log("");
+      console.log("sent: one summary per completed day -- counts, the lethe version and the kind of");
+      console.log("host. never queries, memories, paths, repositories, user or machine names.");
+      console.log("DO_NOT_TRACK=1 or LETHE_TELEMETRY=0 turns it off whatever is configured.");
+      const pending = due();
+      console.log("");
+      if (!pending.length) {
+        console.log(state === "on" ? "nothing waiting to be sent." : "nothing recorded.");
+      } else {
+        console.log(`waiting to be sent (${pending.length} day${pending.length === 1 ? "" : "s"}), exactly as it would go:`);
+        for (const s of pending) console.log(JSON.stringify(s));
+      }
+      return;
+    }
+
     case "brief": {
       const { text, briefing } = sessionInstructions(new Store(process.cwd()));
       console.log(text);
@@ -598,6 +670,7 @@ whether this is what moved adoption.`);
       console.log(`the two !memory/ lines in ${join(root!, ".lethe", ".gitignore")} are the whole`);
       console.log("decision, so changing your mind later moves no files. Commit that file:");
       console.log("it is what keeps the memories out of git, on your machine and everyone else's.");
+      await askTelemetry();
 
       if (r === "added") console.log("\nwrote that file; lethe never touches your root .gitignore.");
       else if (r === "updated") console.log("\nflipped the !memory/ lines in the existing file.");

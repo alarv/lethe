@@ -24,6 +24,7 @@ import { appendFileSync, mkdirSync, readFileSync, existsSync, renameSync, statSy
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { record } from "./telemetry.js";
 
 /**
  * Build stamp of the running code.
@@ -126,6 +127,8 @@ function logPath(): string {
 }
 
 export function log(event: Event, detail: string, extra?: Record<string, unknown>): void {
+  // Counted whether or not the log is on; record() checks consent itself.
+  record(event, detail, extra);
   const parts = [new Date().toISOString(), event.padEnd(8), detail];
   // pid lets metrics attribute an event to the server that wrote it. Without
   // it, sessions open side by side were told apart only by which started last,

@@ -243,6 +243,23 @@ lethe gc --dead        # also drop directories whose project is gone
 lethe gc --reindex     # throw the index away; it rebuilds on the next recall
 ```
 
+## Telemetry
+
+Off unless you say yes. `lethe init` asks once, in a terminal, and never again; nothing
+is sent without an answer. If you opt in, lethe sends one summary per completed day:
+counts of sessions, recalls, notes, confirmations and consolidations, the lethe version,
+and which kind of host connected, from a fixed list. It never sends a query, a memory, a
+path, a repository, a user or machine name, or any id that outlives one server process.
+
+```sh
+lethe telemetry          # on or off, why, and the exact JSON waiting to be sent
+lethe telemetry off      # or DO_NOT_TRACK=1, or LETHE_TELEMETRY=0, which beat any setting
+```
+
+The collector is in [`telemetry/`](telemetry/). It refuses anything that is not that
+exact shape and stores no addresses. Request logging is off on the platform as well.
+`LETHE_TELEMETRY_URL` points lethe at a collector you run yourself.
+
 ## Why a seahorse
 
 Named for the river of forgetting. The seahorse is the hippocampus — *hippos*, horse;

@@ -1,0 +1,14 @@
+name = "lethe-telemetry"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+# Request logs would record every sender's IP address next to a timestamp.
+# The collector stores neither, and neither should the platform it runs on.
+[observability]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lethe-telemetry"
+database_id = "5f995e12-9948-44db-9a75-0e753e9d29f6"

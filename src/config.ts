@@ -39,6 +39,11 @@ export interface Config {
    * an import cycle, so this field documents it rather than serving it.
    */
   log?: boolean;
+  /**
+   * Send anonymous daily usage counts? Unset means never asked, which is off.
+   * Read by telemetry.ts directly, for the same reason as `log`.
+   */
+  telemetry?: boolean;
 }
 
 function read(path: string): Config {

@@ -53,6 +53,14 @@ The release workflow refuses to publish a version with no section here.
   briefing reaches every session with nothing to install. Each briefing is logged with
   the ids it listed. Verified with a real Claude Code session, which quoted it back
   without calling a tool.
+- **Opt-in anonymous telemetry.** `lethe init` asks once. A yes sends one summary per
+  completed day: counts, the version and the kind of host. Queries, memories, paths,
+  names and ids are never sent. `lethe telemetry` shows the exact payload before
+  anything goes, and `DO_NOT_TRACK=1` beats any setting. Counts are taken where log()
+  is called, but do not need the log to be on. The collector, a Cloudflare Worker plus
+  D1 in `telemetry/`, refuses anything that is not that exact shape. It runs at
+  `https://lethe-telemetry.alarvfm.workers.dev`.
+- **The MCP server reports its real version** instead of a hardcoded `0.0.1`.
 - **`lethe brief`** prints exactly what a session started in this directory is told.
 - **`lethe log -f`** follows the activity log live across every session.
 - **The MCP server sends `instructions`.** Claude Code puts them in the system prompt, so the
