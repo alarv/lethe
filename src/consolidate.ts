@@ -32,7 +32,7 @@
 
 import type { Memory } from "./store.js";
 import type { Distiller } from "./compact.js";
-import { droppedFrom, unrepresentedSources } from "./evidence.js";
+import { droppedFrom, evidence, unrepresentedSources } from "./evidence.js";
 import { log } from "./log.js";
 
 /**
@@ -54,6 +54,19 @@ export const MAX_REPLAY = 24;
  * for a run where it matters more -- which is a slower merge, not a lost one.
  */
 export const MAX_REVISABLE = 12;
+
+/**
+ * The gate's rule, shown to the model instead of left for it to guess.
+ *
+ * The same PII episode was distilled and rejected on four consecutive runs:
+ * every claim kept `customer_id` and dropped the file paths, which were all the
+ * gate counted. Telling the model what the gate counts is cheaper than a retry
+ * loop, and a rejection it was warned about is at least a diagnosable one.
+ */
+function keepLine(body: string, indent: string): string {
+  const handles = evidence(body).filter((e) => !e.includes("\n")).slice(0, 8);
+  return handles.length ? `\n${indent}keep: ${handles.map((e) => `\`${e}\``).join(", ")}` : "";
+}
 
 export interface DraftClaim {
   /** 1-based indices into the episodes given to the model. */
@@ -85,7 +98,11 @@ Rules:
   "we spent time debugging tests".
 - Reproduce commands, paths, environment variables and error strings EXACTLY as
   written in the sources. A lesson whose command has been paraphrased cannot be
-  found again, and the claim will be rejected if any are missing.
+  found again.
+- Some episodes end with a "keep:" line listing the strings a search would find
+  them by. A claim must contain at least one of them, verbatim, from EVERY
+  episode it cites -- otherwise it is rejected and the episode stays raw. You
+  need not keep all of them; keep the one that carries the lesson.
 - No preamble, no commentary, no tool use. Do not explain what you are doing.
 
 Format, repeated per claim:
@@ -121,7 +138,7 @@ Rules for revising:
 - A revision REPLACES the claim it supersedes. Keep everything in it that is
   still true and add what the episodes taught; anything you leave out is lost.
 - Reproduce the old claim's commands, paths and error strings exactly as well.
-  The revision is rejected for dropping them, exactly as it is for episodes.
+  Its "keep:" line binds the revision exactly as an episode's does.
 - Supersede more than one claim only when they are the same lesson stated twice.
   That case is worth catching: it is how duplicates get collapsed.
 - Never supersede a claim for being on a related topic. In doubt, leave it and
@@ -205,7 +222,7 @@ export async function consolidate(
   }
 
   const numbered = replay
-    .map((m, i) => `${i + 1}. ${m.title}${m.body ? `\n   ${m.body.replace(/\n/g, "\n   ")}` : ""}`)
+    .map((m, i) => `${i + 1}. ${m.title}${m.body ? `\n   ${m.body.replace(/\n/g, "\n   ")}` : ""}${keepLine(m.body, "   ")}`)
     .join("\n\n");
 
   // Most salient first, then most recently touched, mirroring replay. A claim
@@ -214,7 +231,7 @@ export async function consolidate(
     .sort((a, b) => b.salience - a.salience || b.updated.localeCompare(a.updated))
     .slice(0, MAX_REVISABLE);
   const numberedClaims = revisable
-    .map((m, i) => `C${i + 1}. ${m.title}${m.body ? `\n    ${m.body.replace(/\n/g, "\n    ")}` : ""}`)
+    .map((m, i) => `C${i + 1}. ${m.title}${m.body ? `\n    ${m.body.replace(/\n/g, "\n    ")}` : ""}${keepLine(m.body, "    ")}`)
     .join("\n\n");
 
   const prompt = revisable.length
@@ -280,7 +297,8 @@ export async function consolidate(
       );
       rejected.push({ claim, missing });
       log("compact",
-        `rejected "${claim.title}": consumed ${orphaned.length} source(s) keeping nothing from them`);
+        `rejected "${claim.title}": consumed ${orphaned.length} source(s) keeping nothing from them`,
+        { lost: JSON.stringify(missing.slice(0, 4)) });
       continue;
     }
 

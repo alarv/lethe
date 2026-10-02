@@ -9,6 +9,56 @@ still move.
 
 The release workflow refuses to publish a version with no section here.
 
+## [Unreleased]
+
+### Fixed
+
+- **`lethe metrics` could report more cold episodes than episodes.** The cold count took
+  every superseded memory, revised claims included, so the real store printed `episodes 25
+  31 of them cold` — 23 consolidated episodes plus 8 revised claims. Cold now counts
+  episodes only, the row reads `2 raw, 23 cold`, and superseded claims and patterns are
+  reported beside the live count they are excluded from.
+- **A distiller failure could log nothing but a colour code.** The error was built from
+  stderr alone, escapes included, which logged `opencode exited 1: [0m`. ANSI sequences are
+  now stripped, an empty stderr falls back to the tail of stdout, and a failure with no
+  output at all says so.
+- **The evidence gate rejected claims that kept the lesson.** It counted only paths,
+  commands and flags, and required them verbatim, so a claim citing `output_schema.py` was
+  rejected for dropping `casino_recomm/recomm_domain/schemas/output_schema.py`, and an FTS5
+  claim keeping `contentless_delete=1` was rejected for not repeating a path the episode
+  mentioned in passing. It now also counts settings, calls and code symbols, ignores case,
+  whitespace and quoting, and accepts a filename for its full path. The prompt lists each
+  episode's handles on a `keep:` line. All 5 claim rejections logged since 2026-09-23 pass on
+  replay, and none of the 54 existing claims that the old gate accepted is rejected by the
+  new one. Rejections now log what each source lost.
+- **`note` stored leaked tool-call markup as the body.** In 9 real memories the model closed
+  `body` with `</body>` and serialised `files`, `tags` and `salience` after it, so the memory
+  was stored with no files or tags and with markup the evidence gate read as content. A tail
+  made only of such markup is cut and its `files` and `tags` recovered.
+- **`lethe metrics` attributed events to whichever session started last.** Sessions open
+  side by side, such as subagents starting seconds apart, gave one start every event and
+  counted the rest as never touching lethe. Log lines now carry `pid=` and events go to the
+  server that wrote them. Older lines without one fall back to the old rule.
+- **`lethe metrics` compared rejected claims against successful runs.** One run can keep two
+  claims and reject five, so it printed "the distiller fails more than it succeeds" over a
+  log where it had not. Claims kept and claims rejected are now counted against each other,
+  and "distiller failures" counts only calls that yielded nothing: an error, or no reply or
+  an unparseable one.
+
+### Added
+
+- **Every session starts briefed.** The server's MCP instructions now list this project's
+  live claims and patterns, titles and ids only, within about 1.5 KB. Recall depended on
+  the model choosing to call it, and measured it did in about a third of sessions; the
+  briefing reaches every session with nothing to install. Each briefing is logged with
+  the ids it listed. Verified with a real Claude Code session, which quoted it back
+  without calling a tool.
+- **`lethe brief`** prints exactly what a session started in this directory is told.
+- **`lethe log -f`** follows the activity log live across every session.
+- **The MCP server sends `instructions`.** Claude Code puts them in the system prompt, so the
+  model is told to recall before investigating even in a repo whose AGENTS.md does not
+  mention lethe.
+
 ## [0.1.3] - 2026-09-29
 
 ### Fixed

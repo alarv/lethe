@@ -133,8 +133,19 @@ lethe learn      # what has been seeded from this repo, and how strong it still 
 ### Make recall automatic
 
 Left alone, an agent mostly doesn't call a memory tool — it has other things on its mind.
-A hook fixes that by running `recall` before the model even sees your message, so
-whatever it finds is already in context:
+So every session starts briefed, with nothing to set up: the server's MCP instructions
+carry a reminder to recall and the titles of this project's distilled claims and patterns,
+best first, within about 1.5 KB. Titles only — the model sees what exists and recalls for
+the detail. Raw episodes are never listed. Verified on Claude Code; a host that ignores
+MCP instructions gets nothing from it. The briefing is built from the directory the host
+starts the server in, so a host that starts it elsewhere gets the reminder alone.
+
+```sh
+lethe brief          # exactly what a session started here is told
+```
+
+A hook goes further by running `recall` on every message before the model sees it, so
+whatever matches that message is already in context:
 
 ```sh
 lethe hook show      # prints a hook config to add to your host
@@ -193,6 +204,7 @@ that consolidation eventually consumes.
 lethe recall "why do the tests fail"   # search
 lethe ls                               # everything recorded
 lethe status                           # is it working?
+lethe log -f                           # watch recalls, notes and compactions live
 lethe metrics                          # is it being used, and is it distilling?
 lethe learn                            # what has been seeded from this repo
 lethe compact --dry-run                # preview consolidation

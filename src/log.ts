@@ -127,9 +127,11 @@ function logPath(): string {
 
 export function log(event: Event, detail: string, extra?: Record<string, unknown>): void {
   const parts = [new Date().toISOString(), event.padEnd(8), detail];
-  if (extra && Object.keys(extra).length) {
-    parts.push(Object.entries(extra).map(([k, v]) => `${k}=${v}`).join(" "));
-  }
+  // pid lets metrics attribute an event to the server that wrote it. Without
+  // it, sessions open side by side were told apart only by which started last,
+  // so a burst of subagent starts took every event and the rest looked unused.
+  const fields = { ...extra, pid: process.pid };
+  parts.push(Object.entries(fields).map(([k, v]) => `${k}=${v}`).join(" "));
   const line = parts.join("  ") + "\n";
 
   if (logging()) {

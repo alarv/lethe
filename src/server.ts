@@ -13,6 +13,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Store, author, claimDir, episodeDir, type Memory } from "./store.js";
 import { compact, type Distiller } from "./compact.js";
+import { repairLeakedArgs } from "./repair.js";
+import { type Brief, brief } from "./brief.js";
 import { buildStamp, log } from "./log.js";
 import { logResolved, resolveDistiller } from "./distil.js";
 import { LEARN_INSTRUCTIONS, gate, seed, seeded, writeWatermark } from "./learn.js";
@@ -67,12 +69,44 @@ const PRESSURE_THRESHOLD = num(process.env.LETHE_PRESSURE, 6);
  */
 const MAX_RAW_AGE_MS = num(process.env.LETHE_MAX_RAW_HOURS, 24) * 60 * 60 * 1000;
 
+/**
+ * Sent at initialize; hosts such as Claude Code place it in the system prompt.
+ *
+ * Tool descriptions are read when the model is already choosing a tool, which
+ * is too late for the decision that matters -- whether to look before digging.
+ * This is the one channel every MCP host reads at session start with nothing to
+ * install, so it carries the reminder and the briefing (brief.ts) for anyone,
+ * including a repo whose AGENTS.md says nothing about lethe.
+ */
+const INSTRUCTIONS =
+  "lethe is this project's memory across sessions. Before investigating anything " +
+  "non-trivial -- a failing test or build, an unfamiliar area, a setup problem -- call " +
+  "recall first: it may already be solved. Record durable lessons with note. When a " +
+  "recalled memory proved right, confirm it; when it is wrong, correct it.";
+
+/** Exactly what a session starting in this store's directory is told. */
+export function sessionInstructions(store: Store): { text: string; briefing: Brief } {
+  const briefing = brief(store.all());
+  return { text: briefing.text ? `${INSTRUCTIONS}\n\n${briefing.text}` : INSTRUCTIONS, briefing };
+}
+
 export function createServer(cwd = process.cwd()): McpServer {
   let store = new Store(cwd);
   let root = cwd;
   /** The directory the store resolves paths against. */
   const workspace = () => root;
-  const server = new McpServer({ name: "lethe", version: "0.0.1" });
+  // Built from the cwd store: instructions go out in the initialize reply, before
+  // the client can be asked for its roots. A host that starts the server outside
+  // the project gets the reminder without a briefing, never another project's.
+  const { text: instructions, briefing } = sessionInstructions(store);
+  if (briefing.listed.length) {
+    log("start", "briefed", {
+      listed: briefing.listed.length,
+      omitted: briefing.omitted,
+      ids: briefing.listed.map((m) => m.id.slice(0, 8)).join(","),
+    });
+  }
+  const server = new McpServer({ name: "lethe", version: "0.0.1" }, { instructions });
 
   /**
    * Bind the store to the workspace the client is actually in.
@@ -230,7 +264,7 @@ export function createServer(cwd = process.cwd()): McpServer {
     },
     async (args) => {
       await ensureBound();
-      const m = store.create(args);
+      const m = store.create({ ...args, ...repairLeakedArgs(args) });
       log("note", m.title, { id: m.id.slice(0, 8), kind: m.kind });
       relievePressure();
       return { content: [{ type: "text", text: `recorded [${m.id.slice(0, 8)}] ${m.title}` }] };

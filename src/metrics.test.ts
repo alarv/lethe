@@ -125,6 +125,22 @@ test("composition separates live from cold and counts pressure", () => {
   assert.equal(c.pressure, 1.0, "pressure sums salience, not headcount");
 });
 
+// The real store printed "episodes 25   31 of them cold": cold counted
+// superseded claims too, so it could exceed the episode total.
+test("cold counts only episodes; superseded claims are reported apart", () => {
+  const c = composition([
+    m2("claim"), m2("claim", "claim-2"), m2("pattern", "pattern-2"),
+    m2("episode"), m2("episode", "claim-1"),
+  ]);
+  assert.equal(c.episodes, 2);
+  assert.equal(c.cold, 1, "a revised claim is not a cold episode");
+  assert.equal(c.superseded, 2);
+  assert.ok(c.cold <= c.episodes);
+  const out = formatComposition(c);
+  assert.match(out, /episodes\s+2\s+1 raw, 1 cold/);
+  assert.match(out, /claims \+ patterns\s+1\s+live; 2 more superseded/);
+});
+
 // The state that went unnoticed for weeks: recall serving raw session
 // transcripts because consolidation had produced nothing.
 test("says plainly when nothing has been distilled", () => {
@@ -256,4 +272,49 @@ test("housekeeping is not use: only tool calls mark a session as having used let
   ]);
   assert.equal(m.sessions, 2);
   assert.equal(m.sessionsUsing, 1, "compact and sampling are the server's doing, forget is a tool call");
+});
+
+test("events go to the session whose server logged them, not the last to start", () => {
+  const m = metrics([
+    line("2026-10-01T10:00:00Z", "start", "mcp server connected  pid=100"),
+    line("2026-10-01T10:00:01Z", "start", "mcp server connected  pid=200"),
+    line("2026-10-01T10:00:02Z", "start", "mcp server connected  pid=300"),
+    line("2026-10-01T10:01:00Z", "recall", '"q"  hits=3 ids=a pid=100'),
+    line("2026-10-01T10:02:00Z", "note", "t  id=b kind=episode pid=200"),
+  ]);
+  assert.equal(m.sessions, 3);
+  assert.equal(m.sessionsUsing, 2, "pid 100 and 200 used it; the last start did not");
+  assert.equal(m.sessionsRecalling, 1);
+});
+
+test("lines without a pid still fall back to the most recent start", () => {
+  const m = metrics([
+    line("2026-10-01T10:00:00Z", "start", "mcp server connected"),
+    line("2026-10-01T10:01:00Z", "recall", '"q"  hits=3 ids=a'),
+  ]);
+  assert.equal(m.sessionsUsing, 1);
+});
+
+test("rejected claims are counted against kept claims, not against runs", () => {
+  const m = metrics([
+    line("2026-10-01T10:00:00Z", "compact", 'rejected "a": consumed 1 source(s) keeping nothing from them'),
+    line("2026-10-01T10:00:00Z", "compact", 'rejected "b": consumed 1 source(s) keeping nothing from them'),
+    line("2026-10-01T10:00:01Z", "compact", "done  via=x claims=3 consumed=3 promoted=0 decayed=1"),
+    line("2026-10-01T11:00:00Z", "error", "distil failed: opencode exited 1 with no output"),
+  ]);
+  assert.equal(m.compactions, 1);
+  assert.equal(m.claimsKept, 3);
+  assert.equal(m.claimsRejected, 2);
+  assert.equal(m.compactionsFailed, 1, "the crashed distiller, not the gate's rejections");
+  const text = formatMetrics(m);
+  assert.doesNotMatch(text, /rejects more than it keeps/);
+});
+
+test("only the connection opens a session; other start lines belong to it", () => {
+  const m = metrics([
+    line("2026-10-01T10:00:00Z", "start", "briefed  listed=5 omitted=0 pid=1"),
+    line("2026-10-01T10:00:00Z", "start", "mcp server connected  pid=1"),
+    line("2026-10-01T10:00:01Z", "start", "bound to workspace root  root=/x pid=1"),
+  ]);
+  assert.equal(m.sessions, 1);
 });

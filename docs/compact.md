@@ -290,7 +290,15 @@ episodes, and the most significant ones should be replayed first.
 A model asked to compress will sometimes absorb an episode and keep nothing from it. That
 is the failure the five-way fusion produced, and it is checked mechanically rather than
 trusted: **consume an episode and the claim must retain at least one of its retrievable
-strings** — a command, a path, a flag, an environment assignment.
+strings** — a command, a path, a flag, an environment assignment, a setting like
+`contentless_delete=1`, a call, or a code symbol (`customer_id`, `rcmCustomerID`). Case,
+whitespace and quoting are ignored, and a claim naming a file keeps a path that gave it in
+full: `output_schema.py` keeps `casino_recomm/recomm_domain/schemas/output_schema.py`.
+
+The prompt shows the model each episode's handles on a `keep:` line, so the rule is stated
+rather than guessed at. Before that the gate counted only paths: on a real store it rejected
+the same PII episode on four consecutive runs, each claim having kept `customer_id` and
+dropped the file list.
 
 Not *every* string. That rule forbids compression outright, since a 2 KB episode citing
 eight files cannot become three lines and keep all eight. A rejected claim leaves its

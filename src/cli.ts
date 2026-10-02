@@ -17,9 +17,9 @@ function pressureThreshold(): number {
 import { promptHook, readHookPolicy } from "./hook.js";
 import { PLACEMENTS, choose } from "./prompt.js";
 import { claimSharing, globalConfigPath, ignoreInGit, shareDefault, staleConfig, staleRootIgnore, writeConfig } from "./config.js";
-import { serve } from "./server.js";
+import { serve, sessionInstructions } from "./server.js";
 import { compact, formatReport } from "./compact.js";
-import { appendFileSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, watchFile, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LOG_PATH, buildStamp, logging, tail } from "./log.js";
 import { human, prune, survey } from "./maintain.js";
@@ -43,7 +43,8 @@ const USAGE = `lethe -- a memory harness for coding agents that forgets on purpo
        [--since=YYYY-MM-DD]    exclude history you do not trust
   lethe hook prompt            recall for a prompt (for a UserPromptSubmit hook)
   lethe hook show              print the hook config to add to settings.json
-  lethe log [-n N]             recent activity
+  lethe log [-n N] [-f]        recent activity; -f keeps following it live
+  lethe brief                  what a session started here is told before its first prompt
   lethe eval candidates        harvest real (query, confirmed memory) pairs for evals/
   lethe init                   decide if this project's claims are committed
        [--share] [--private]   answer up front instead of being asked
@@ -442,6 +443,37 @@ whether this is what moved adoption.`);
       const n = i >= 0 ? Number(rest[i + 1] ?? 40) : 40;
       const lines = tail(n);
       console.log(lines.length ? lines.join("\n") : `nothing logged yet (${LOG_PATH})`);
+      if (!rest.includes("-f")) return;
+      if (!logging()) {
+        console.error("logging is off, so there is nothing to follow. `lethe init --debug` turns it on;");
+        console.error("running sessions pick it up after `lethe restart`.");
+        process.exit(1);
+      }
+      // Polled rather than fs.watch: every session's server appends to this one
+      // file, and polling behaves the same on every platform.
+      let offset = existsSync(LOG_PATH) ? statSync(LOG_PATH).size : 0;
+      watchFile(LOG_PATH, { interval: 500 }, (cur) => {
+        if (cur.size < offset) offset = 0; // rotated: the new file starts over
+        if (cur.size === offset) return;
+        const fd = openSync(LOG_PATH, "r");
+        try {
+          const buf = Buffer.alloc(cur.size - offset);
+          readSync(fd, buf, 0, buf.length, offset);
+          process.stdout.write(buf.toString("utf8"));
+        } finally {
+          closeSync(fd);
+        }
+        offset = cur.size;
+      });
+      return;
+    }
+
+    case "brief": {
+      const { text, briefing } = sessionInstructions(new Store(process.cwd()));
+      console.log(text);
+      if (!briefing.listed.length) {
+        console.log("\n(no distilled memory here yet, so sessions get the reminder alone)");
+      }
       return;
     }
 

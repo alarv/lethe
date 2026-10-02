@@ -88,6 +88,24 @@ async function fromOllama(): Promise<Resolved | null> {
   }
 }
 
+// CSI sequences (colours, cursor moves) and OSC sequences (titles, links).
+const ANSI = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g;
+
+/**
+ * What to say when a distiller CLI exits non-zero.
+ *
+ * Built from stderr alone this logged `opencode exited 1: [0m` -- a colour reset
+ * and nothing else. Escapes are stripped, and when stderr has nothing left the
+ * tail of stdout is used, since some CLIs print their errors there.
+ */
+export function failureDetail(stderr: string, stdout: string, max = 300): string {
+  const clean = (s: string) => s.replace(ANSI, "").trim();
+  const err = clean(stderr);
+  if (err) return err.slice(0, max);
+  const out = clean(stdout);
+  return out.length > max ? out.slice(-max).trim() : out;
+}
+
 /**
  * Run a command with stdin closed.
  *
@@ -114,7 +132,10 @@ function capture(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<s
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(out.trim());
-      else reject(new Error(`${cmd} exited ${code}: ${err.slice(0, 300)}`));
+      else {
+        const detail = failureDetail(err, out);
+        reject(new Error(`${cmd} exited ${code}` + (detail ? `: ${detail}` : " with no output")));
+      }
     });
   });
 }

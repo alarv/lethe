@@ -98,3 +98,42 @@ test("but real commands, filenames and flags still count", () => {
 test("an assignment does not swallow trailing punctuation", () => {
   assert.ok(evidence("use LETHE_HOME=mktemp, then run it").includes("LETHE_HOME=mktemp"));
 });
+
+// Calibration against the rejections that followed: real claims that kept the
+// lesson and were thrown away because the gate counted only incidental paths.
+test("settings, calls and code symbols in backticks count as evidence", () => {
+  assert.ok(evidence("needs `contentless_delete=1` or DELETE fails").includes("contentless_delete=1"));
+  assert.ok(evidence("use `content=''` here").includes("content=''"));
+  assert.ok(evidence("`bm25()` returns negatives").includes("bm25()"));
+  assert.ok(evidence("hidden in `customer_id`").includes("customer_id"));
+  assert.ok(evidence("renamed to `rcmCustomerID`").includes("rcmCustomerID"));
+  assert.ok(evidence("built into `node:sqlite`").includes("node:sqlite"));
+});
+
+test("a claim naming the file keeps a path given in full", () => {
+  assert.deepEqual(
+    unrepresentedSources(["schemas live in casino_recomm/recomm_domain/schemas/output_schema.py"],
+      "Authoritative tables are documented in output_schema.py"),
+    [], "the filename is the handle; the directory chain is not",
+  );
+});
+
+test("a basename too short to be distinctive does not stand for the path", () => {
+  assert.deepEqual(unrepresentedSources(["see src/a.ts"], "see a.ts"), [0]);
+});
+
+test("formatting differences do not count as dropping a setting", () => {
+  assert.deepEqual(
+    unrepresentedSources(["`content='', detail='full'` is 4.1 MB"],
+      "FTS5 sizing: use content = '' , detail = \"full\" with contentless_delete=1"),
+    [],
+  );
+});
+
+test("a claim that keeps none of a source's handles is still rejected", () => {
+  assert.deepEqual(
+    unrepresentedSources(["needs `contentless_delete=1`; see src/store.ts"],
+      "Use a contentless table to save space"),
+    [0], "the widened rules must not make the gate a formality",
+  );
+});

@@ -26,15 +26,53 @@ const KNOWN_EXTENSIONS =
  * slashes). None of those is a command anyone would search for, and requiring
  * them made every compression fail.
  *
- * A command has whitespace, or is a filename, or is a flag. A bare identifier
- * is terminology.
+ * A command has whitespace, or is a filename, or is a flag. A bare lowercase
+ * word is terminology.
+ *
+ * Recalibrated the other way after the gate went on to miss what episodes were
+ * actually about: an FTS5 episode whose lesson was `contentless_delete=1` and
+ * `content=''` registered only two paths it mentioned in passing, and a PII
+ * audit about `customer_id` registered only its file list. Claims that kept the
+ * real handle and dropped the incidental path were rejected, run after run.
+ * Settings, calls and code symbols are what someone searches for.
  */
 function isLoadBearing(span: string): boolean {
   if (span.length < 4) return false;
   if (/\s/.test(span)) return true;              // a command has arguments
   if (KNOWN_EXTENSIONS.test(span)) return true;  // a filename
   if (/^-{1,2}[a-z]/i.test(span)) return true;   // a flag
-  if (/^[A-Z][A-Z0-9_]{2,}=/.test(span)) return true; // an assignment
+  if (/\w=/.test(span)) return true;             // a setting: `contentless_delete=1`
+  if (/\w\(/.test(span)) return true;            // a call: `bm25()`
+  if (/^\w+(_\w+)+$/.test(span)) return true;    // snake_case: `customer_id`
+  if (/^[a-z]+[A-Z]\w*$/.test(span)) return true; // camelCase: `rcmCustomerID`
+  if (/^[\w*-]+([.:][\w*-]+)+$/.test(span)) return true; // qualified: `node:sqlite`
+  return false;
+}
+
+/** Case, whitespace and quote style are formatting, not content. */
+function normalise(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/["`]/g, "'")
+    .replace(/\s*([=,:])\s*/g, "$1")
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Did the claim keep this string?
+ *
+ * Literal substring matching rejected a claim citing `output_schema.py` for
+ * dropping `casino_recomm/recomm_domain/schemas/output_schema.py`. The filename
+ * is the handle; the directory chain is where it happens to live today.
+ */
+function kept(evidenceString: string, claim: string): boolean {
+  const c = normalise(claim);
+  const e = normalise(evidenceString);
+  if (c.includes(e)) return true;
+  if (KNOWN_EXTENSIONS.test(e) && e.includes("/")) {
+    const base = e.slice(e.lastIndexOf("/") + 1);
+    return base.length >= 5 && c.includes(base);
+  }
   return false;
 }
 
@@ -89,12 +127,12 @@ export function unrepresentedSources(sources: string[], claim: string): number[]
   sources.forEach((source, i) => {
     const strings = evidence(source);
     if (!strings.length) return; // nothing to keep, so nothing was lost
-    if (!strings.some((e) => claim.includes(e))) out.push(i);
+    if (!strings.some((e) => kept(e, claim))) out.push(i);
   });
   return out;
 }
 
 /** Evidence a specific source carried that the claim did not keep. */
 export function droppedFrom(source: string, claim: string): string[] {
-  return evidence(source).filter((e) => !claim.includes(e));
+  return evidence(source).filter((e) => !kept(e, claim));
 }

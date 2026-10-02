@@ -50,8 +50,18 @@ export interface Metrics {
   confirmedAfterRecall: number;
   /** Compaction runs that produced at least one claim. */
   compactions: number;
-  /** Compaction attempts that produced nothing, e.g. a rejected distiller reply. */
+  /** Distiller calls that yielded nothing usable: an error, no reply, an unparseable one. */
   compactionsFailed: number;
+  /** Claims written by compaction. */
+  claimsKept: number;
+  /**
+   * Claims the evidence gate threw away.
+   *
+   * Counted apart from compactionsFailed: one run can keep two claims and reject
+   * five, and lumping per-claim rejections in with per-run successes printed
+   * "the distiller fails more than it succeeds" over a log where it had not.
+   */
+  claimsRejected: number;
   /** Builds seen running. More than one means stale servers are still serving. */
   builds: string[];
 }
@@ -111,14 +121,16 @@ const DISTILLER_CHILD = /refusing to start inside a distiller subprocess/;
 export function metrics(lines: string[]): Metrics {
   const entries = parse(lines);
 
-  // Events are attributed to the most recent preceding start. Sessions
-  // interleave across projects, so this is approximate -- but the question it
-  // answers, "did a session that had lethe available use it", does not need
-  // perfect attribution to be worth knowing.
-  const sessions: { used: boolean; recalled: boolean; recalledAny: boolean }[] = [];
+  // Events go to the session whose server logged them, by pid. Lines written
+  // before pids were logged, and hook recalls (a separate process), fall back
+  // to the most recent preceding start -- approximate, because sessions
+  // interleave, which is exactly why the pid is there now.
+  type Session = { used: boolean; recalled: boolean; recalledAny: boolean };
+  const sessions: Session[] = [];
+  const byPid = new Map<string, Session>();
   let recalls = 0, recallsViaHook = 0, notes = 0, confirms = 0, corrections = 0, emptyRecalls = 0;
   let hitTotal = 0, hitCount = 0, confirmedAfterRecall = 0;
-  let compactions = 0, compactionsFailed = 0;
+  let compactions = 0, compactionsFailed = 0, claimsKept = 0, claimsRejected = 0;
   const builds = new Set<string>();
 
   for (const e of entries) {
@@ -128,12 +140,19 @@ export function metrics(lines: string[]): Metrics {
       // 141 "sessions" in the denominator that no person ever opened, and began a
       // fresh session that swallowed the parent's following events.
       if (DISTILLER_CHILD.test(e.rest)) continue;
-      sessions.push({ used: false, recalled: false, recalledAny: false });
+      // The server logs other start lines (briefed, bound to a workspace root)
+      // within the same session; only the connection opens one.
+      if (!/\bconnected\b/.test(e.rest)) continue;
+      const session = { used: false, recalled: false, recalledAny: false };
+      sessions.push(session);
+      const pid = /\bpid=(\d+)/.exec(e.rest)?.[1];
+      if (pid) byPid.set(pid, session);
       const build = /build=(\S+)/.exec(e.rest)?.[1];
       if (build) builds.add(build);
       continue;
     }
-    const current = sessions[sessions.length - 1];
+    const pid = /\bpid=(\d+)/.exec(e.rest)?.[1];
+    const current = (pid && byPid.get(pid)) || sessions[sessions.length - 1];
     // Only a tool call counts as use. compact, sampling and index lines are the
     // server doing its own housekeeping, and counting them reported 63% of
     // sessions as using lethe when the model had called it in 40%.
@@ -171,8 +190,16 @@ export function metrics(lines: string[]): Metrics {
         break;
       case "compact":
         // The log records several lines per run; count outcomes, not chatter.
-        if (/\bclaims=([1-9]\d*)/.test(e.rest)) compactions += 1;
-        else if (/^rejected/.test(e.rest)) compactionsFailed += 1;
+        {
+          const kept = Number(/\bclaims=(\d+)/.exec(e.rest)?.[1] ?? 0);
+          claimsKept += kept;
+          if (kept > 0) compactions += 1;
+          else if (/^rejected "/.test(e.rest)) claimsRejected += 1;
+          else if (/^rejected/.test(e.rest)) compactionsFailed += 1;
+        }
+        break;
+      case "error":
+        if (/^distil failed/.test(e.rest)) compactionsFailed += 1;
         break;
     }
   }
@@ -193,6 +220,8 @@ export function metrics(lines: string[]): Metrics {
     confirmedAfterRecall,
     compactions,
     compactionsFailed,
+    claimsKept,
+    claimsRejected,
     builds: [...builds].sort(),
   };
 }
@@ -210,7 +239,10 @@ export interface Composition {
   episodes: number;
   claims: number;
   patterns: number;
+  /** Consolidated episodes: superseded by the claim they were distilled into. */
   cold: number;
+  /** Claims and patterns replaced by a revision; not in `claims` or `patterns`. */
+  superseded: number;
   /** Unconsolidated episodes. */
   waiting: number;
   /** Salience summed over unconsolidated episodes: what pressure actually is. */
@@ -226,7 +258,10 @@ export function composition(
     episodes: memories.filter((m) => m.kind === "episode").length,
     claims: live("claim"),
     patterns: live("pattern"),
-    cold: memories.filter((m) => m.supersededBy).length,
+    // Episodes only. Counting every superseded memory here put revised claims
+    // into the episode row and printed "25 episodes, 31 of them cold".
+    cold: memories.filter((m) => m.kind === "episode" && m.supersededBy).length,
+    superseded: memories.filter((m) => m.kind !== "episode" && m.supersededBy).length,
     waiting: live("episode"),
     pressure: memories
       .filter((m) => m.kind === "episode" && !m.supersededBy)
@@ -240,8 +275,8 @@ export function formatComposition(c: Composition, threshold = 6): string {
   const row = (label: string, value: string, note = "") =>
     lines.push(`  ${label.padEnd(26)} ${value.padStart(9)}   ${note}`);
 
-  row("claims + patterns", String(distilled));
-  row("episodes", String(c.episodes), `${c.cold} of them cold`);
+  row("claims + patterns", String(distilled), c.superseded ? `live; ${c.superseded} more superseded` : "");
+  row("episodes", String(c.episodes), `${c.waiting} raw, ${c.cold} cold`);
   row(
     "distilled per episode",
     c.episodes ? (distilled / c.episodes).toFixed(2) : "n/a",
@@ -319,8 +354,11 @@ export function formatMetrics(m: Metrics, now: Date = new Date()): string {
   lines.push("consolidation");
   row("compaction runs", String(m.compactions),
     m.compactions === 0 ? "<- never produced a claim" : "");
-  row("rejected replies", String(m.compactionsFailed),
+  row("distiller failures", String(m.compactionsFailed),
     m.compactionsFailed > m.compactions ? "<- the distiller fails more than it succeeds" : "");
+  row("claims kept", String(m.claimsKept));
+  row("claims rejected", String(m.claimsRejected),
+    m.claimsRejected > m.claimsKept ? "<- the evidence gate rejects more than it keeps" : "");
 
   lines.push("");
   lines.push("retrieval");
