@@ -129,8 +129,35 @@ function reportLearned(store: Store): void {
   console.log("each has a stable key, so it revises in place rather than duplicating.");
 }
 
+/**
+ * The usage lines for one command, with their indented flag lines.
+ *
+ * `lethe init --help` used to run init: no command looked for --help, so it was
+ * one more unrecognised flag and a command that writes files went ahead.
+ */
+function usageFor(cmd: string): string {
+  const lines = USAGE.split("\n");
+  const out: string[] = [];
+  let inside = false;
+  for (const line of lines) {
+    if (/^  lethe \S/.test(line)) inside = line.startsWith(`  lethe ${cmd} `) || line === `  lethe ${cmd}`;
+    else if (!/^ {7}\[/.test(line)) inside = false;
+    if (inside) out.push(line);
+  }
+  return out.length ? out.join("\n") : USAGE;
+}
+
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
+  // Before anything else runs: asking how a command works must never run it.
+  if (cmd === "-h" || cmd === "--help") {
+    console.log(USAGE);
+    return;
+  }
+  if (cmd && (rest.includes("--help") || rest.includes("-h"))) {
+    console.log(usageFor(cmd));
+    return;
+  }
   const store = new Store();
 
   switch (cmd) {

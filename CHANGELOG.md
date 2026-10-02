@@ -11,6 +11,12 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`lethe <command> --help` ran the command.** No command looked for `--help`, so it was
+  ignored like any unknown flag, and `lethe init --help` went ahead and initialised. `--help`
+  and `-h` now print that command's usage and exit before anything runs.
+
 ## [0.2.0] - 2026-10-02
 
 ### Fixed
