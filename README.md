@@ -48,6 +48,10 @@ Four episodes in, one rule out. On Thursday your agent reads one line instead of
 rediscovering it over twenty-nine minutes — and you never see any of it, because it
 happened while you weren't waiting.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="lethe note on Tuesday, lethe recall from a fresh session on Thursday, the answer comes back" width="820">
+</p>
+
 ## Install
 
 Works in any host that speaks MCP.
