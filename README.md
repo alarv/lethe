@@ -30,27 +30,12 @@ Your agent solved it on Tuesday. On Thursday, in a new session, it has no idea.
 Every memory tool answers that by storing more. lethe answers it by storing **less,
 better** — it distils what happened into what is true, and throws the rest away.
 
-```
-tue 14:02  tests failed — 14 errors, all "connection refused"
-tue 14:09  checked the test DB config, looked fine
-tue 14:15  tried resetting the test database, still refused
-tue 14:31  postgres container wasn't running. `docker compose up` fixed it
-                              │
-                              ▼      later, off the latency path
-        ┌────────────────────────────────────────────────┐
-        │  Tests need `docker compose up` first.         │
-        │  "Connection refused" is almost always the     │
-        │  missing container, not the test code.         │
-        └────────────────────────────────────────────────┘
-```
-
-Four episodes in, one rule out. On Thursday your agent reads one line instead of
-rediscovering it over twenty-nine minutes — and you never see any of it, because it
-happened while you weren't waiting.
-
 <p align="center">
   <img src="assets/demo.gif" alt="lethe note on Tuesday, lethe recall from a fresh session on Thursday, the answer comes back" width="820">
 </p>
+
+In practice your agent makes these calls itself over MCP; the CLI is the same memory,
+for when you want to look.
 
 ## Install
 
