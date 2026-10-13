@@ -137,6 +137,20 @@ export function renderMemories(
  * Writing to stdout is safe here and only here: a hook is a short-lived process
  * whose stdout the host reads, not the MCP transport.
  */
+/**
+ * Text the harness puts in the user's turn that no person typed.
+ *
+ * Measured over a week of real use, 38 of 58 hook recalls ran on subagent
+ * hand-backs and task notifications: long, word-rich, and about whatever the
+ * subagent did, so they matched memories and pushed them into context for no
+ * question at all -- and counted as hook "adoption".
+ */
+const MACHINE = /^\s*(?:<(?:agent-message|task-notification|system-reminder|command-name|command-message|local-command-\w+|bash-(?:input|stdout|stderr))\b|\[(?:Request interrupted|SYSTEM NOTIFICATION))/i;
+
+export function isMachinePrompt(prompt: string): boolean {
+  return MACHINE.test(prompt);
+}
+
 export async function promptHook(): Promise<void> {
   try {
     const raw = await readStdin();
@@ -150,6 +164,7 @@ export async function promptHook(): Promise<void> {
     }
     const prompt = (input.prompt ?? "").trim();
     if (!prompt || prompt.startsWith("/")) return; // slash commands are not questions
+    if (isMachinePrompt(prompt)) return;
     if (terms(prompt).length < MIN_TERMS) return;
 
     const store = new Store(input.cwd ?? process.cwd());

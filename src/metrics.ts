@@ -73,6 +73,38 @@ interface Entry {
   rest: string;
 }
 
+export interface DistillerHealth {
+  /** Failed distiller calls since the last one that kept a claim. */
+  failingSince: string | null;
+  failures: number;
+  /** The most recent reason given. */
+  reason: string | null;
+}
+
+/**
+ * Is the distiller failing right now?
+ *
+ * A week of "monthly quota exceeded" went unnoticed: doctor reported the
+ * distiller as found, which it was, and the failures were only in the log.
+ * Found and working are different questions.
+ */
+export function distillerHealth(lines: string[]): DistillerHealth {
+  let failures = 0, failingSince: string | null = null, reason: string | null = null;
+  for (const e of parse(lines)) {
+    const failed = (e.event === "error" && /^distil failed/.test(e.rest)) ||
+      (e.event === "compact" && /^rejected (unparseable|: model returned nothing)/.test(e.rest));
+    const worked = e.event === "compact" && /^done\b/.test(e.rest) && /\bclaims=[1-9]/.test(e.rest);
+    if (worked) {
+      failures = 0; failingSince = null; reason = null;
+    } else if (failed) {
+      failures += 1;
+      failingSince ??= e.ts;
+      reason = e.rest.replace(/^distil failed:\s*/, "").replace(/\s+pid=\d+$/, "");
+    }
+  }
+  return { failingSince, failures, reason };
+}
+
 function parse(lines: string[]): Entry[] {
   const out: Entry[] = [];
   for (const line of lines) {

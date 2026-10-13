@@ -331,3 +331,26 @@ test("continuation lines of a multi-line event are not entries", () => {
   assert.equal(m.sessions, 1);
   assert.equal(m.compactionsFailed, 1);
 });
+
+import { distillerHealth } from "./metrics.js";
+
+test("distiller health counts failures since the last run that kept a claim", () => {
+  const h = distillerHealth([
+    line("2026-10-01T00:00:00Z", "error", "distil failed: old  pid=1"),
+    line("2026-10-02T00:00:00Z", "compact", "done  via=x claims=2 consumed=2"),
+    line("2026-10-06T00:00:00Z", "error", "distil failed: Error: You have exceeded your monthly quota  pid=2"),
+    line("2026-10-07T00:00:00Z", "compact", "done  via=x claims=0 consumed=0"),
+    line("2026-10-08T00:00:00Z", "error", "distil failed: Error: You have exceeded your monthly quota  pid=3"),
+  ]);
+  assert.equal(h.failures, 2);
+  assert.equal(h.failingSince, "2026-10-06T00:00:00Z");
+  assert.equal(h.reason, "Error: You have exceeded your monthly quota");
+});
+
+test("a run that kept a claim clears the failure streak", () => {
+  const h = distillerHealth([
+    line("2026-10-06T00:00:00Z", "error", "distil failed: x"),
+    line("2026-10-07T00:00:00Z", "compact", "done  via=x claims=1 consumed=1"),
+  ]);
+  assert.equal(h.failures, 0);
+});

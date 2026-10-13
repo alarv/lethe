@@ -21,6 +21,13 @@ The release workflow refuses to publish a version with no section here.
 - **Distiller failures named the banner, not the reason.** A week of `Payment Required: You
   have exceeded your monthly quota` was logged as `opencode exited 1: > build ·
   gpt-5.3-codex`. The error summary now prefers lines that say what went wrong.
+- **A failing distiller looked healthy.** `doctor` reported the distiller as found, which it
+  was, while every call to it failed. `doctor` now fails a `distilling` check after two
+  failures in a row, giving the last reason, and `status` shows the streak.
+- **The prompt hook recalled on text no person typed.** Subagent hand-backs and task
+  notifications arrive in the user's turn. In a week of real use they were 38 of 58 hook
+  recalls, pushing memories into context for no question and counting as adoption. They
+  are now skipped.
 
 ### Fixed
 

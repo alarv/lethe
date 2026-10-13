@@ -7,7 +7,7 @@
  */
 
 import { Store, claimDir, episodeDir, findProjectRoot, legacyClaimDir, letheHome, readSource } from "./store.js";
-import { composition, formatComposition, formatMetrics, metrics, readLog, since } from "./metrics.js";
+import { composition, distillerHealth, formatComposition, formatMetrics, metrics, readLog, since } from "./metrics.js";
 
 /** Mirrors the server's threshold, so status and metrics agree with the trigger. */
 function pressureThreshold(): number {
@@ -363,6 +363,15 @@ whether this is what moved adoption.`);
       // until now happened in silence in the middle of doctor's output.
       const d = await spinning("looking for a model", () => resolveDistiller());
       console.log(`${ok(!!d)} distiller  ${d ? d.via : "none"}`);
+      const dh = distillerHealth(lines);
+      if (d && dh.failures >= 2) {
+        console.log(`${badge("FAIL")} distilling ${dh.failures} failed attempt(s) since ${dh.failingSince!.slice(0, 10)}`);
+        problems.push(
+          `The distiller has failed ${dh.failures} time(s) in a row, so nothing is being\n` +
+          `  consolidated. Last reason: ${dh.reason}\n` +
+          "  Fix the model it runs (quota, login, model name), or set LETHE_DISTILLER.",
+        );
+      }
       {
         const t = consent();
         console.log(`${ok(true)} telemetry  ${t.state === "on" ? "on" : "off"} (${t.why})` +
@@ -473,6 +482,12 @@ whether this is what moved adoption.`);
       console.log(`${key("episodes")} ${episodeDir()}`);
       console.log(`${key("log")} ${logging() ? LOG_PATH : "off (`lethe init --debug` to record activity)"}`);
       console.log(`${key("distiller")} ${await describeDistiller()}`);
+      {
+        const dh = distillerHealth(lines);
+        if (dh.failures >= 2) {
+          console.log(`${" ".repeat(10)} ${c.yellow(`failing since ${dh.failingSince!.slice(0, 10)} (${dh.failures}x): ${dh.reason}`)}`);
+        }
+      }
       console.log("");
       if (!lines.length) {
         console.log("No activity logged yet.");

@@ -200,3 +200,14 @@ test("disableAllHooks blocks it too; absent or false settings do not", () => {
   assert.equal(hookPolicy([{ path: "settings.json", settings: { allowManagedHooksOnly: false } }]).blocked, false);
   assert.equal(hookPolicy([{ path: "x", settings: null }, { path: "y", settings: {} }]).blocked, false);
 });
+
+import { isMachinePrompt } from "./hook.js";
+
+test("prompts the harness wrote are not questions", () => {
+  assert.ok(isMachinePrompt('<agent-message from="a178"> [Subagent hand-back] The text below'));
+  assert.ok(isMachinePrompt("<task-notification>\n<task-id>x</task-id>"));
+  assert.ok(isMachinePrompt("  <system-reminder>stuff"));
+  assert.ok(isMachinePrompt("[Request interrupted by user]"));
+  assert.ok(!isMachinePrompt("why does the build fail after the <tag> change?"));
+  assert.ok(!isMachinePrompt("ok now let's check if telemetry is working"));
+});
