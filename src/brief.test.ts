@@ -53,3 +53,14 @@ test("stays inside the budget and says how many were left out", () => {
 test("an empty project gets no briefing at all", () => {
   assert.equal(brief([mem({ kind: "episode" })]).text, "");
 });
+
+import { holds } from "./server.js";
+
+test("the recall description names what is stored, briefly", () => {
+  const b = brief([mem({ title: "Tests need docker compose up first" }), mem({ title: "x".repeat(100) })]);
+  const s = holds(b);
+  assert.match(s, /holds 2 distilled lessons/);
+  assert.match(s, /Tests need docker compose up first/);
+  assert.ok(s.length < 200, "examples are truncated");
+  assert.equal(holds(brief([])), "");
+});

@@ -11,6 +11,13 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The `recall` description names what this project's memory holds**: how many distilled
+  lessons there are, with three titles as examples. The session briefing barely changed how
+  often the model recalled (18% of briefed sessions against 13%). A tool description is read
+  when the model chooses a tool, not only at session start.
+
 ### Fixed
 
 - **A multi-line distiller error broke the activity log.** opencode's output was written into

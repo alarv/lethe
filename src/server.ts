@@ -85,6 +85,23 @@ const INSTRUCTIONS =
   "recall first: it may already be solved. Record durable lessons with note. When a " +
   "recalled memory proved right, confirm it; when it is wrong, correct it.";
 
+/**
+ * One sentence naming what is stored, for the recall description.
+ *
+ * The briefing reaches the model at session start and barely moved how often it
+ * recalled (18% of briefed sessions against 13%). The tool description is read
+ * at the moment it chooses a tool, so it says there is something to find, and
+ * what kind of thing.
+ */
+export function holds(b: Brief): string {
+  const total = b.listed.length + b.omitted;
+  if (!total) return "";
+  const cut = (t: string) => (t.length > 60 ? `${t.slice(0, 57).trimEnd()}...` : t);
+  const examples = b.listed.slice(0, 3).map((m) => `"${cut(m.title)}"`).join(", ");
+  return ` This project's memory already holds ${total} distilled lesson${total === 1 ? "" : "s"}, ` +
+    `such as ${examples}.`;
+}
+
 /** Exactly what a session starting in this store's directory is told. */
 export function sessionInstructions(store: Store): { text: string; briefing: Brief } {
   const briefing = brief(store.all());
@@ -212,7 +229,7 @@ export function createServer(cwd = process.cwd()): McpServer {
       "problem, a 'why is it done this way' question, or an error you have not seen " +
       "here before. It is cheap and usually saves rediscovering something already " +
       "solved. Do not wait to be asked. Returns memories with ids -- use confirm or " +
-      "correct on them.",
+      "correct on them." + holds(briefing),
     {
       query: z.string().describe("what you are trying to find out"),
       paths: z.array(z.string()).default([])
