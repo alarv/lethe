@@ -100,9 +100,20 @@ const ANSI = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-
  */
 export function failureDetail(stderr: string, stdout: string, max = 300): string {
   const clean = (s: string) => s.replace(ANSI, "").trim();
+  // An error line beats a banner. opencode prints "> build · <model>" first and
+  // the reason after it, so the first 300 characters reported the banner and a
+  // week of "monthly quota exceeded" was logged as "exited 1: > build".
+  const lines = (s: string) => clean(s).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const isReason = (l: string) =>
+    /error|fail|denied|exceeded|quota|unauthori[sz]ed|forbidden|not found|invalid|refused|timed? ?out/i.test(l);
+  const fromErr = lines(stderr).filter(isReason).join(" | ");
+  if (fromErr) return fromErr.slice(0, max);
+  // stdout is read from the end, where a CLI puts the line that ended it.
+  const fromOut = lines(stdout).filter(isReason).join(" | ");
+  if (fromOut) return fromOut.length > max ? fromOut.slice(-max).trim() : fromOut;
   const err = clean(stderr);
-  if (err) return err.slice(0, max);
-  const out = clean(stdout);
+  if (err) return err.replace(/\s*\n\s*/g, " | ").slice(0, max);
+  const out = clean(stdout).replace(/\s*\n\s*/g, " | ");
   return out.length > max ? out.slice(-max).trim() : out;
 }
 
@@ -149,19 +160,21 @@ function capture(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<s
 async function fromCli(): Promise<Resolved | null> {
   const env = { ...process.env, [GUARD]: "1" };
 
+  // No model is named unless LETHE_MODEL says so: a hardcoded one ages out, or is
+  // not on the user's plan, and the CLI already knows what its user has access to.
+  const model = process.env.LETHE_MODEL;
+
   if (await onPath("opencode")) {
-    const model = process.env.LETHE_MODEL ?? "github-copilot/claude-haiku-4.5";
     return {
-      via: `opencode ${model}`,
-      distil: (prompt) => capture("opencode", ["run", "--pure", "-m", model, prompt], env),
+      via: `opencode ${model ?? "(default model)"}`,
+      distil: (prompt) => capture("opencode", ["run", "--pure", ...(model ? ["-m", model] : []), prompt], env),
     };
   }
 
   if (await onPath("claude")) {
-    const model = process.env.LETHE_MODEL ?? "haiku";
     return {
-      via: `claude ${model}`,
-      distil: (prompt) => capture("claude", ["-p", "--model", model, prompt], env),
+      via: `claude ${model ?? "(default model)"}`,
+      distil: (prompt) => capture("claude", ["-p", ...(model ? ["--model", model] : []), prompt], env),
     };
   }
   return null;

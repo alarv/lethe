@@ -11,6 +11,25 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A multi-line distiller error broke the activity log.** opencode's output was written into
+  the log as is, so its extra lines (`Error: ...`, `> build · <model>`) passed `--since`
+  filters and were parsed as entries. `lethe metrics` printed its window as starting at `>`.
+  Log lines are now flattened to one line, and metrics and harvest accept only lines that
+  start with a timestamp, so older logs read correctly too.
+- **Distiller failures named the banner, not the reason.** A week of `Payment Required: You
+  have exceeded your monthly quota` was logged as `opencode exited 1: > build ·
+  gpt-5.3-codex`. The error summary now prefers lines that say what went wrong.
+
+### Fixed
+
+- **The distiller named a model the user might not have.** It defaulted to
+  `github-copilot/claude-haiku-4.5` under opencode and `haiku` under claude, so a Copilot
+  account out of quota, or a plan without that model, failed every compaction with
+  `opencode exited 1`. The CLI is now run with its own default model unless `LETHE_MODEL`
+  names one.
+
 ## [0.2.1] - 2026-10-02
 
 ### Fixed

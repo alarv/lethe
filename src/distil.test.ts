@@ -21,3 +21,8 @@ test("only the tail of a long stdout is kept", () => {
 test("nothing anywhere gives an empty detail", () => {
   assert.equal(failureDetail("\x1b[0m", "\x1b]0;title\x07  "), "");
 });
+
+test("the reason beats the banner opencode prints first", () => {
+  const stderr = "> build · gpt-5.3-codex\n\nError: Payment Required: {\"error\":{\"message\":\"You have exceeded your monthly quota\"}}\n";
+  assert.match(failureDetail(stderr, ""), /^Error: Payment Required.*monthly quota/);
+});

@@ -129,7 +129,10 @@ function logPath(): string {
 export function log(event: Event, detail: string, extra?: Record<string, unknown>): void {
   // Counted whether or not the log is on; record() checks consent itself.
   record(event, detail, extra);
-  const parts = [new Date().toISOString(), event.padEnd(8), detail];
+  // One event, one line. A distiller error carrying its CLI's multi-line output
+  // was written as is, and the continuation lines -- "Error: ...", "> build" --
+  // passed `since` filters and were parsed as entries with a timestamp of ">".
+  const parts = [new Date().toISOString(), event.padEnd(8), detail.replace(/\s*\r?\n\s*/g, " | ")];
   // pid lets metrics attribute an event to the server that wrote it. Without
   // it, sessions open side by side were told apart only by which started last,
   // so a burst of subagent starts took every event and the rest looked unused.

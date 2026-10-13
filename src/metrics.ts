@@ -76,7 +76,8 @@ interface Entry {
 function parse(lines: string[]): Entry[] {
   const out: Entry[] = [];
   for (const line of lines) {
-    const m = /^(\S+)\s+(\S+)\s+(.*)$/.exec(line);
+    // A timestamp or nothing: older logs hold continuation lines of multi-line events.
+    const m = /^(\d{4}-\d{2}-\d{2}T\S+)\s+(\S+)\s+(.*)$/.exec(line);
     if (m?.[1] && m[2]) out.push({ ts: m[1], event: m[2], rest: m[3] ?? "" });
   }
   return out;

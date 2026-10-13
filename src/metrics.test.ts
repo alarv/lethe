@@ -318,3 +318,16 @@ test("only the connection opens a session; other start lines belong to it", () =
   ]);
   assert.equal(m.sessions, 1);
 });
+
+test("continuation lines of a multi-line event are not entries", () => {
+  const m = metrics(since([
+    line("2026-10-06T07:48:24Z", "error", "distil failed: opencode exited 1: > build"),
+    "",
+    'Error: Payment Required: {"error":"quota"}  pid=1',
+    "> build · model",
+    line("2026-10-06T08:00:00Z", "start", "mcp server connected  pid=2"),
+  ], "2026-10-03"));
+  assert.equal(m.since, "2026-10-06T07:48:24Z");
+  assert.equal(m.sessions, 1);
+  assert.equal(m.compactionsFailed, 1);
+});
