@@ -23,7 +23,7 @@ import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync
 import { join } from "node:path";
 import { LOG_PATH, buildStamp, logging, tail } from "./log.js";
 import { human, prune, survey } from "./maintain.js";
-import { describeDistiller, resolveDistiller } from "./distil.js";
+import { describeDistiller, listDistillers, probeDistiller, resolveDistiller } from "./distil.js";
 import { seeded } from "./learn.js";
 import { type Candidate, harvest } from "./harvest.js";
 import { spinning } from "./progress.js";
@@ -361,8 +361,41 @@ whether this is what moved adoption.`);
 
       // Probing costs a few `which` calls and a 1.5s reach for ollama, which
       // until now happened in silence in the middle of doctor's output.
-      const d = await spinning("looking for a model", () => resolveDistiller());
+      const ds = await spinning("looking for a model", () => listDistillers());
+      const d = ds[0] ?? null;
       console.log(`${ok(!!d)} distiller  ${d ? d.via : "none"}`);
+      if (d) {
+        // Found is not working: a CLI on PATH with an expired login, or an
+        // account over quota, resolves fine and then fails every call. Ask it
+        // to distil four words, so a broken default is reported here instead
+        // of discovered weeks later in the telemetry.
+        const probe = await spinning("asking it to distil", () => probeDistiller(d));
+        if (probe.ok) {
+          console.log(`${ok(true)} distilling answered`);
+        } else {
+          console.log(`${badge("FAIL")} distilling ${probe.via} failed: ${probe.reason}`);
+          // The chain has a preference order, not a single answer: a broken
+          // default must not hide a working fallback.
+          let alt: string | null = null;
+          for (const next of ds.slice(1)) {
+            const p = await spinning(`trying ${next.via}`, () => probeDistiller(next));
+            if (p.ok) {
+              alt = next.via;
+              console.log(`${ok(true)} distilling ${alt} answered`);
+              break;
+            }
+          }
+          problems.push(
+            `The distiller resolves (${probe.via}) but cannot distil: ${probe.reason}\n` +
+            (alt
+              ? `  ${alt} answered, but consolidation keeps using the broken default\n` +
+                "  first. Fix the default's quota or login -- or unset LETHE_API_KEY\n" +
+                "  if the broken path is the API one shadowing a working local model."
+              : "  Nothing else on this machine can distil either. Fix the model's\n" +
+                "  quota or login, set LETHE_API_KEY, or install ollama."),
+          );
+        }
+      }
       const dh = distillerHealth(lines);
       if (d && dh.failures >= 2) {
         console.log(`${badge("FAIL")} distilling ${dh.failures} failed attempt(s) since ${dh.failingSince!.slice(0, 10)}`);

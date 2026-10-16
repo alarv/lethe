@@ -181,30 +181,45 @@ async function fromCli(): Promise<Resolved | null> {
 }
 
 /**
+ * Every distiller this machine can offer, in preference order.
+ *
+ * resolveDistiller takes the first; doctor probes down the list when the
+ * first cannot distil, so a broken default does not hide a working fallback.
+ *
+ * @param sampling supplied by the MCP server when the host advertises it.
+ */
+export async function listDistillers(
+  sampling?: Distiller | undefined,
+): Promise<Resolved[]> {
+  const mode = process.env.LETHE_DISTILLER ?? "auto";
+  if (mode === "off") return [];
+
+  // A distiller running inside a spawned child would fork again.
+  if (process.env[GUARD] === "1") return [];
+
+  if (sampling) return [{ distil: sampling, via: "host sampling" }];
+  if (mode === "sampling") return [];
+
+  const out: Resolved[] = [];
+  const api = fromApi();
+  if (api) out.push(api);
+
+  const ollama = await fromOllama();
+  if (ollama) out.push(ollama);
+
+  const cli = await fromCli();
+  if (cli) out.push(cli);
+
+  return out;
+}
+
+/**
  * @param sampling supplied by the MCP server when the host advertises it.
  */
 export async function resolveDistiller(
   sampling?: Distiller | undefined,
 ): Promise<Resolved | null> {
-  const mode = process.env.LETHE_DISTILLER ?? "auto";
-  if (mode === "off") return null;
-
-  // A distiller running inside a spawned child would fork again.
-  if (process.env[GUARD] === "1") return null;
-
-  if (sampling) return { distil: sampling, via: "host sampling" };
-  if (mode === "sampling") return null;
-
-  const api = fromApi();
-  if (api) return api;
-
-  const ollama = await fromOllama();
-  if (ollama) return ollama;
-
-  const cli = await fromCli();
-  if (cli) return cli;
-
-  return null;
+  return (await listDistillers(sampling))[0] ?? null;
 }
 
 export async function describeDistiller(): Promise<string> {
@@ -214,4 +229,31 @@ export async function describeDistiller(): Promise<string> {
 
 export function logResolved(r: Resolved | null): void {
   log("sampling", r ? `distilling via ${r.via}` : "no model available; consolidation skipped");
+}
+
+export interface ProbeResult {
+  via: string;
+  ok: boolean;
+  /** Why it failed: the distiller's own error, or "empty reply". */
+  reason: string | null;
+}
+
+/**
+ * Is the distiller working right now, not merely installed?
+ *
+ * Resolving only answers "found": a CLI on PATH with an expired login, or an
+ * opencode account over quota, resolves fine and then fails every call --
+ * which went unnoticed for weeks because nothing ever asked it to distil
+ * outside a real compaction. The prompt is four words so the check costs
+ * almost nothing, and it never touches the log or telemetry: a diagnosis is
+ * not activity.
+ */
+export async function probeDistiller(r: Resolved): Promise<ProbeResult> {
+  try {
+    const out = await r.distil("Reply with exactly: ok");
+    if (!out.trim()) return { via: r.via, ok: false, reason: "empty reply" };
+    return { via: r.via, ok: true, reason: null };
+  } catch (e) {
+    return { via: r.via, ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
 }

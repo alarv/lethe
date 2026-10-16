@@ -31,6 +31,12 @@ The release workflow refuses to publish a version with no section here.
 - **A failing distiller looked healthy.** `doctor` reported the distiller as found, which it
   was, while every call to it failed. `doctor` now fails a `distilling` check after two
   failures in a row, giving the last reason, and `status` shows the streak.
+- **A broken distiller still passed `doctor` with logging off.** The failure history above
+  reads from the activity log, which is off by default, so a distiller that resolves but
+  cannot distil -- an opencode account over quota, an expired login -- looked fine.
+  `doctor` now asks the resolved distiller to distil four words and FAILs with its reason
+  when it cannot; when a later candidate in the chain answers, it names the working one
+  and says the broken default shadows it.
 - **The prompt hook recalled on text no person typed.** Subagent hand-backs and task
   notifications arrive in the user's turn. In a week of real use they were 38 of 58 hook
   recalls, pushing memories into context for no question and counting as adoption. They
