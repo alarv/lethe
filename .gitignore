@@ -25,3 +25,6 @@ docs/superpowers/
 
 # JetBrains project files, local to this machine.
 .idea/
+
+# Private operational notes; copied between machines by hand.
+docs/internal/
