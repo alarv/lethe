@@ -11,6 +11,15 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-16
+
+### Fixed
+
+- **A broken default distiller stalled compaction while a working one sat unused.** opencode
+  on an exhausted Copilot quota resolved first, failed every call, and `claude` behind it was
+  never tried or even listed. Both CLIs are now candidates, and a candidate that fails or
+  returns nothing hands the prompt to the next; the error reported is the first one's.
+
 ## [0.2.2] - 2026-10-16
 
 ### Changed
@@ -39,10 +48,6 @@ The release workflow refuses to publish a version with no section here.
   `doctor` now asks the resolved distiller to distil four words and FAILs with its reason
   when it cannot; when a later candidate in the chain answers, it names the working one
   and says the broken default shadows it.
-- **A broken default distiller stalled compaction while a working one sat unused.** opencode
-  on an exhausted Copilot quota resolved first, failed every call, and `claude` behind it was
-  never tried or even listed. Both CLIs are now candidates, and a candidate that fails or
-  returns nothing hands the prompt to the next; the error reported is the first one's.
 - **The prompt hook recalled on text no person typed.** Subagent hand-backs and task
   notifications arrive in the user's turn. In a week of real use they were 38 of 58 hook
   recalls, pushing memories into context for no question and counting as adoption. They
@@ -596,7 +601,8 @@ proven** — see [`docs/evals.md`](docs/evals.md).
   The one place they would earn their cost is grouping episodes; see
   [`docs/architecture.md`](docs/architecture.md).
 
-[Unreleased]: https://github.com/alarv/lethe/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/alarv/lethe/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/alarv/lethe/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/alarv/lethe/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/alarv/lethe/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/alarv/lethe/compare/v0.1.3...v0.2.0
