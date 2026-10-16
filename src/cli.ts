@@ -31,24 +31,24 @@ import { badge, c, logLine } from "./color.js";
 import { DEFAULT_ENDPOINT, consent, due, endpoint, flush } from "./telemetry.js";
 
 const TELEMETRY_CHOICES = [
-  { label: "yes", detail: "send anonymous daily counts -- numbers only, `lethe telemetry` shows them" },
-  { label: "no", detail: "send nothing; you will not be asked again" },
+  { label: "keep it on", detail: "send anonymous daily counts -- numbers only, `lethe telemetry` shows them" },
+  { label: "turn it off", detail: "send nothing; you will not be asked again" },
 ];
 
-/** The one time anyone is asked. Interactive only; never from the MCP server. */
-async function askTelemetry(): Promise<void> {
+/** The one time anyone is told. Interactive only; never from the MCP server. */
+async function offerTelemetryOptOut(): Promise<void> {
   if (!process.stdin.isTTY || consent().state !== "unasked" || !endpoint()) return;
   console.log("");
-  console.log("one more question, asked once. lethe can send a daily summary of how it is");
-  console.log("used -- counts of sessions, recalls, notes and consolidations, the version, and");
-  console.log("the kind of host. Never a query, memory, path, repository or name.");
+  console.log("lethe sends a daily summary of how it is used -- counts of sessions,");
+  console.log("recalls, notes and consolidations, the version, and the kind of host.");
+  console.log("Never a query, memory, path, repository or name. It is on unless you say otherwise.");
   console.log("");
-  const pick = await choose("send anonymous usage counts?", TELEMETRY_CHOICES);
-  if (pick === null) return; // cancelled: still unasked, still off
+  const pick = await choose("telemetry is on -- keep it?", TELEMETRY_CHOICES);
+  if (pick === null) return; // cancelled: still unasked, still on by default
   writeConfig(globalConfigPath(), { telemetry: pick === 0 });
   console.log(pick === 0
-    ? "\nthank you. `lethe telemetry off` stops it at any time."
-    : "\nnothing will be sent. `lethe telemetry on` if you change your mind.");
+    ? "\nkept on. `lethe telemetry off` stops it at any time."
+    : "\nturned off. nothing will be sent. `lethe telemetry on` if you change your mind.");
 }
 
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
@@ -407,8 +407,8 @@ whether this is what moved adoption.`);
       }
       {
         const t = consent();
-        console.log(`${ok(true)} telemetry  ${t.state === "on" ? "on" : "off"} (${t.why})` +
-          (t.state === "on" && !endpoint() ? "; no endpoint in this build, so nothing is sent" : ""));
+        console.log(`${ok(true)} telemetry  ${t.state === "off" ? "off" : "on"} (${t.why})` +
+          (t.state !== "off" && !endpoint() ? "; no endpoint in this build, so nothing is sent" : ""));
       }
       if (!d) {
         problems.push(
@@ -581,8 +581,8 @@ whether this is what moved adoption.`);
       const arg = rest[0];
       if (arg === "send") {
         const before = due();
-        if (consent().state !== "on" || !endpoint()) {
-          console.error(`nothing sent: telemetry is ${consent().state === "on" ? "on but has no endpoint" : "off"}.`);
+        if (consent().state === "off" || !endpoint()) {
+          console.error(`nothing sent: telemetry is ${!endpoint() ? "on but has no endpoint" : "off"}.`);
           process.exit(1);
         }
         const r = await flush();
@@ -600,12 +600,12 @@ whether this is what moved adoption.`);
       }
       const { state, why } = consent();
       const url = endpoint();
-      console.log(`${c.cyan("telemetry")}  ${state === "on" ? c.green("on") : c.dim("off")} ${c.dim(`(${why})`)}`);
+      console.log(`${c.cyan("telemetry")}  ${state === "off" ? c.dim("off") : c.green("on")} ${c.dim(`(${why})`)}`);
       // Shown only when it is not the default: an override is worth confirming,
       // a missing one explains why nothing is sent. The default is in the README.
       if (!url) console.log(`${c.cyan("endpoint")}   ${c.yellow("none -- this build has nowhere to send to, so nothing is sent")}`);
       else if (url !== DEFAULT_ENDPOINT) console.log(`${c.cyan("endpoint")}   ${url} ${c.dim("(LETHE_TELEMETRY_URL)")}`);
-      if (state === "on" && arg === "on" && (process.env.DO_NOT_TRACK || process.env.LETHE_TELEMETRY === "0")) {
+      if (state !== "off" && arg === "on" && (process.env.DO_NOT_TRACK || process.env.LETHE_TELEMETRY === "0")) {
         console.log("           your environment overrides the setting");
       }
       console.log("");
@@ -615,7 +615,7 @@ whether this is what moved adoption.`);
       const pending = due();
       console.log("");
       if (!pending.length) {
-        console.log(state === "on" ? "nothing waiting to be sent." : "nothing recorded.");
+        console.log(state === "off" ? "nothing recorded." : "nothing waiting to be sent.");
       } else {
         console.log(`waiting to be sent (${pending.length} day${pending.length === 1 ? "" : "s"}), exactly as it would go:`);
         for (const s of pending) console.log(JSON.stringify(s));
@@ -753,7 +753,7 @@ whether this is what moved adoption.`);
       console.log(`the two !memory/ lines in ${join(root!, ".lethe", ".gitignore")} are the whole`);
       console.log("decision, so changing your mind later moves no files. Commit that file:");
       console.log("it is what keeps the memories out of git, on your machine and everyone else's.");
-      await askTelemetry();
+      await offerTelemetryOptOut();
 
       if (r === "added") console.log("\nwrote that file; lethe never touches your root .gitignore.");
       else if (r === "updated") console.log("\nflipped the !memory/ lines in the existing file.");

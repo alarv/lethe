@@ -45,6 +45,25 @@ keyword matching, say so. If compaction is unimplemented, say so and make the co
 fail loudly rather than no-op — a stub that silently succeeds is how a project ends up
 shipping something that looks finished and does nothing.
 
+## README structure
+
+The README sells, installs, and teaches the nouns — in that order — and stops. Detail
+lives in docs/ or in command help. The order is load-bearing:
+
+1. Hook, demo, install. The install block is the conversion point; keep every host.
+2. What it does: the three memory kinds, then the three things that happen to them.
+   No command may appear before its noun is explained.
+3. Working with it: text-in-repo (sharing merged in, not its own section), day-to-day
+   commands, how the agent actually calls it, seeding, cleanup — each compressed to
+   its essence. Anything needing a paragraph belongs in docs/ or
+   `lethe <cmd> --help`, plus one README line at most.
+4. Why: seahorse trimmed (full account in docs/brain.md), evals, design links.
+5. Contributing, telemetry at the very bottom (opt-out, nobody reads it), the rule,
+   license.
+
+No new top-level README section without cutting or merging another. If the README
+passes ~250 lines, something in step 3 wants to be a doc.
+
 ## Storage
 
 `~/.lethe` is collected as it goes: the index prunes rows for files that vanished, the

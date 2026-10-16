@@ -43,6 +43,14 @@ It is deployed at `https://lethe-telemetry.alarvfm.workers.dev`, and `DEFAULT_EN
 
 ## Read it
 
+`GET /` serves a public dashboard (no build step, no third-party requests):
+`https://lethe-telemetry.alarvfm.workers.dev`. `GET /v1/stats?days=90` returns
+the aggregates behind it — sums grouped by day and version, host totals, and
+graded health pills (adoption, recalling, answer rate, distiller, yield).
+Per-install rows never leave D1; the folding happens in `aggregate()` in
+`worker/src/index.js`, which is the privacy boundary, so serialise nothing
+else from that handler.
+
 ```sh
 npx wrangler d1 execute lethe-telemetry --remote --command "
   select v, count(*) as installs_days, sum(sessions) as sessions,

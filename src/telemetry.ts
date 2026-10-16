@@ -1,11 +1,13 @@
 /**
- * Anonymous usage counts, opt-in.
+ * Anonymous usage counts, on by default.
  *
  * `lethe metrics` answers "is it being used?" for one machine. Whether lethe
  * works for anyone else -- whether sessions recall, whether consolidation keeps
  * claims -- is unknowable without counts from machines that are not the
- * author's. So, like an IDE's usage statistics: asked once, off unless you say
- * yes, and only ever counts.
+ * author's. So, like an IDE's usage statistics: on unless you say otherwise,
+ * and only ever counts. `lethe init` says so once, in a terminal;
+ * `lethe telemetry off`, DO_NOT_TRACK=1 or LETHE_TELEMETRY=0 stops it, and an
+ * explicit off is never overridden by anything.
  *
  * What leaves the machine is one summary per completed day: numbers, the lethe
  * version, and which kind of host connected (from a fixed list). Never a query,
@@ -60,8 +62,10 @@ export type Consent = "on" | "off" | "unasked";
 /**
  * Whether counts are recorded, and why.
  *
- * DO_NOT_TRACK is the cross-tool convention and beats everything, including a
- * yes given earlier: someone who exports it in their shell profile means it.
+ * DO_NOT_TRACK is the cross-tool convention and beats everything, including an
+ * explicit yes: someone who exports it in their shell profile means it. An
+ * explicit no in config is next and is equally final. Anything never answered
+ * is on: telemetry is opt-out, so a machine nobody configured still reports.
  */
 export function consent(): { state: Consent; why: string } {
   const dnt = process.env.DO_NOT_TRACK;
@@ -75,7 +79,7 @@ export function consent(): { state: Consent; why: string } {
   } catch {
     // no config: nobody has been asked
   }
-  return { state: "unasked", why: "never asked; off until you answer" };
+  return { state: "unasked", why: "on by default; `lethe telemetry off` stops it" };
 }
 
 /** The version of the running package, read once from its package.json. */
@@ -152,7 +156,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 /** Called by log() for every event. Must never throw and never block for long. */
 export function record(event: string, detail: string, extra?: Record<string, unknown>): void {
-  if (consent().state !== "on") return;
+  if (consent().state === "off") return;
   const lines = counters(event, detail, extra);
   if (!lines.length) return;
   try {
@@ -286,7 +290,7 @@ const post: Post = async (url, body) => {
  */
 export async function flush(send: Post = post): Promise<{ sent: number; kept: number }> {
   const url = endpoint();
-  if (consent().state !== "on" || !url) return { sent: 0, kept: 0 };
+  if (consent().state === "off" || !url) return { sent: 0, kept: 0 };
   if (!due().length) return { sent: 0, kept: 0 };
 
   const mine = join(dir(), `sending-${process.pid}-${Date.now()}.log`);

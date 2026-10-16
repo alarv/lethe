@@ -30,8 +30,15 @@ const pending = () => {
 const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
 const today = new Date().toISOString().slice(0, 10);
 
-test("off until asked, and nothing is recorded while off", () => {
+test("on by default, and recorded while never asked", () => {
   assert.equal(consent().state, "unasked");
+  record("recall", '"q"', { hits: 3 });
+  assert.equal(pending().length, 1);
+});
+
+test("an explicit off records nothing", () => {
+  optIn(false);
+  assert.equal(consent().state, "off");
   record("recall", '"q"', { hits: 3 });
   assert.deepEqual(pending(), []);
 });
@@ -134,6 +141,7 @@ test("flush sends nothing when off or when there is nowhere to send", async () =
   writeFileSync(join(dir, "pending.log"), `${yesterday} 1 session\n`);
   let calls = 0;
   const send = async () => { calls += 1; return true; };
+  optIn(false);
   await flush(send);
   optIn(true);
   process.env.LETHE_TELEMETRY_URL = "";

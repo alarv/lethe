@@ -89,64 +89,6 @@ npx @alarv/lethe doctor
 Needs Node 22+. On older versions retrieval falls back to a simpler ranker rather than
 failing.
 
-### Sharing memory
-
-Episodes (raw session logs) never leave `~/.lethe` — always private. Claims (distilled,
-reusable facts) land in `<repo>/.lethe/memory/`, and `lethe init` asks once per project
-whether to commit them:
-
-```sh
-npx @alarv/lethe init
-```
-
-Commit only in a private repo — claims can name internal services, deploy steps, and the
-reasoning behind decisions. The answer just toggles two lines in `.lethe/.gitignore`, so
-changing your mind later moves no files. Skip the prompt with `lethe init --share` or
-`lethe init --private`. `lethe doctor` flags the one bad state: sharing on, nothing
-committed.
-
-### Seeding memory
-
-An empty store teaches an agent to stop calling `recall`. So there's a `learn` tool: ask
-your agent to call it, and it reads the repo and writes down what the project already
-says about itself — conventions, commands, gotchas — instead of starting from nothing.
-
-Every fact it writes must cite a real file and quote it verbatim, or it's rejected.
-Seeded claims start weak and decay if nothing ever confirms them; one that proves useful
-gets reinforced.
-
-```sh
-lethe learn      # what has been seeded from this repo, and how strong it still is
-```
-
-### Make recall automatic
-
-Left alone, an agent mostly doesn't call a memory tool — it has other things on its mind.
-So every session starts briefed, with nothing to set up: the server's MCP instructions
-carry a reminder to recall and the titles of this project's distilled claims and patterns,
-best first, within about 1.5 KB. Titles only — the model sees what exists and recalls for
-the detail. Raw episodes are never listed. Verified on Claude Code; a host that ignores
-MCP instructions gets nothing from it. The briefing is built from the directory the host
-starts the server in, so a host that starts it elsewhere gets the reminder alone.
-
-```sh
-lethe brief          # exactly what a session started here is told
-```
-
-A hook goes further by running `recall` on every message before the model sees it, so
-whatever matches that message is already in context:
-
-```sh
-lethe hook show      # prints a hook config to add to your host
-```
-
-If your organisation manages Claude Code with `allowManagedHooksOnly`, hooks you add
-yourself are skipped without an error, so this one will never run. `lethe doctor` and
-`lethe hook show` check for that and say so; the fix is to have an administrator deploy
-the hook as a managed one.
-
-opencode gets the same via [`plugins/opencode.js`](plugins/opencode.js).
-
 ## What it does
 
 Three kinds of memory, and **where a memory lives is decided by what it is, not by who
@@ -158,7 +100,7 @@ asks**:
 | `claim` | what is true | distilled from episodes, shareable |
 | `pattern` | how we do things here | promoted once a claim has earned it |
 
-And three things memory tools generally don't do:
+And three things that happen to them:
 
 **Consolidation.** A deferred pass hands your raw episodes to a model, which decides which
 of them are about the same underlying problem and writes down what was invariant across
@@ -178,14 +120,12 @@ in the index being confidently wrong forever.
   e5f6a7b8-async-state-is-a-race.md
 ```
 
-Readable, diffable, reviewable in a pull request. `git blame` works on your agent's
-memory. Nothing is locked in a database you can't inspect — and if you delete lethe
-tomorrow, you keep the markdown.
-
-Claims land in the repo so your team can review what the agent learned before it becomes
-shared knowledge; whether they are committed is one line in `.lethe/.gitignore` — see
-[Sharing memory](#sharing-memory). Episodes never move: they are a private scratchpad
-that consolidation eventually consumes.
+Readable, diffable, reviewable in a pull request. Claims land in the repo so your team can
+review what the agent learned before it becomes shared knowledge; `lethe init` asks once
+per project whether to commit them (`--share` / `--private` to skip the question).
+Commit only in a private repo — claims can name internal services and the reasoning behind
+decisions. Episodes never move: they are a private scratchpad that consolidation
+eventually consumes. If you delete lethe tomorrow, you keep the markdown.
 
 ### Day to day
 
@@ -200,54 +140,46 @@ lethe compact --dry-run                # preview consolidation
 lethe gc                               # what is in ~/.lethe, and what is dead in it
 ```
 
-Anything slow reports progress — a bar where the fraction is knowable, and elapsed time
-against the timeout where it isn't, because one model call can't report a percentage
-without inventing it. It all goes to **stderr**, never stdout: stdout is the MCP transport,
-and it's also what `lethe status | grep` reads. Outside a terminal, and under CI, the
-animation is off and each phase prints once instead. `LETHE_PROGRESS=0` silences it,
-`LETHE_PROGRESS=1` forces it on.
+Slow commands report progress on stderr, so stdout stays pipeable (`lethe status | grep`
+works). `LETHE_PROGRESS=0` silences it, `LETHE_PROGRESS=1` forces it on.
+
+### How the agent actually calls it
+
+Left alone, an agent mostly doesn't call a memory tool — it has other things on its mind.
+So every session starts briefed: the MCP instructions carry a reminder plus the titles of
+this project's claims and patterns, best first, in about 1.5 KB. The model sees what exists
+and recalls for the detail; raw episodes are never listed. A host that ignores MCP
+instructions gets nothing from it. A hook goes further, running `recall` on every message
+before the model sees it:
+
+```sh
+lethe brief          # exactly what a session started here is told
+lethe hook show      # prints the hook config to add to your host
+```
+
+opencode gets the same via [`plugins/opencode.js`](plugins/opencode.js).
+
+### Seeding an empty store
+
+An empty store teaches an agent to stop calling `recall`. So `learn` seeds it from what the
+repo already says about itself — conventions, commands, gotchas. Every fact must cite a
+real file and quote it verbatim, or it is rejected:
+
+```sh
+lethe learn      # what has been seeded from this repo, and how strong it still is
+```
 
 ### It cleans up after itself
 
-`~/.lethe` is the one directory lethe grows where you are not looking, so nothing in it is
-left to accumulate:
+`~/.lethe` is the one directory lethe grows where you are not looking:
 
 - **The index prunes itself.** Rows for files that no longer exist go on the next sync.
-  Recall reads only the files that changed and only the results it returns — it never
-  parses the whole store, which is what used to make one recall cost 4.4 seconds on a
-  36,000-memory store.
-- **The log is off by default**, because appending forever to a file in your home
-  directory is not a diagnostic. `lethe init --debug` turns it on; it rotates at 512 KB
-  and keeps one previous copy. With it off, `lethe metrics` and the activity rows in
-  `status` and `doctor` say so rather than reporting zero.
+- **The log is off by default** (`lethe init --debug` turns it on); it rotates at 512 KB
+  and keeps one copy. With it off, `metrics` says so rather than reporting zero.
 - **Dead project directories are collected** as compaction passes — but only ones holding
   no memories. A directory that still has memories is never removed automatically, however
-  missing its repository looks, because a path that is gone today is as likely to be an
-  unmounted disk or a moved checkout. `lethe gc` names those; `lethe gc --dead` removes
-  them once you have looked.
-
-```sh
-lethe gc --dry-run     # say what would go, change nothing
-lethe gc --dead        # also drop directories whose project is gone
-lethe gc --reindex     # throw the index away; it rebuilds on the next recall
-```
-
-## Telemetry
-
-Off unless you say yes. `lethe init` asks once, in a terminal, and never again; nothing
-is sent without an answer. If you opt in, lethe sends one summary per completed day:
-counts of sessions, recalls, notes, confirmations and consolidations, the lethe version,
-and which kind of host connected, from a fixed list. It never sends a query, a memory, a
-path, a repository, a user or machine name, or any id that outlives one server process.
-
-```sh
-lethe telemetry          # on or off, why, and the exact JSON waiting to be sent
-lethe telemetry off      # or DO_NOT_TRACK=1, or LETHE_TELEMETRY=0, which beat any setting
-```
-
-The collector is in [`telemetry/`](telemetry/). It refuses anything that is not that
-exact shape and stores no addresses. Request logging is off on the platform as well.
-`LETHE_TELEMETRY_URL` points lethe at a collector you run yourself.
+  dead its path looks. `lethe gc` names those; `lethe gc --dead` removes them once you
+  have looked.
 
 ## Why a seahorse
 
@@ -255,13 +187,12 @@ Named for the river of forgetting. The seahorse is the hippocampus — *hippos*,
 *kampos*, sea monster — which is what early anatomists thought the structure looked like,
 and where episodic memory is written before it is either consolidated or lost.
 
-That is not decoration. The brain doesn't have one memory system, it has several with
-different physics, and the reason is a constraint we share: anything that learns fast
-enough to record a one-off event cannot also extract stable general structure without
-overwriting itself. So the brain runs a fast sparse episodic buffer alongside a slow dense
-semantic store, and moves memory between them during sleep by replaying it.
-
-lethe borrows that architecture on purpose, rather than as a metaphor:
+The brain doesn't have one memory system, it has several with different physics, and the
+reason is a constraint we share: anything that learns fast enough to record a one-off
+event cannot also extract stable general structure without overwriting itself. So the
+brain runs a fast sparse episodic buffer alongside a slow dense semantic store, and moves
+memory between them during sleep by replaying it. lethe borrows that architecture on
+purpose, rather than as a metaphor:
 
 | brain | lethe |
 |---|---|
@@ -271,12 +202,10 @@ lethe borrows that architecture on purpose, rather than as a metaphor:
 | synaptic downscaling during sleep | global decay, reinforcement on access |
 | pattern completion — a partial cue reinstates the whole | a query in the old wording still finds the new claim |
 
-Forgetting is the part people find surprising, and it's the whole point. Sleep
-*downscales* synapses globally: weak traces fall below threshold and vanish, and
-signal-to-noise improves because the total was cut back. A system that retained every
-episode in full detail could never form the concept "dog" — it would have a million
-unrelated animal encounters. **Forgetting the incidental is the same operation as
-extracting the general rule.**
+Forgetting is the part people find surprising, and it's the whole point. A system that
+retained every episode in full detail could never form the concept "dog" — it would have
+a million unrelated animal encounters. **Forgetting the incidental is the same operation
+as extracting the general rule.**
 
 [`docs/brain.md`](docs/brain.md) has the full account, with citations and an honest
 section on where we break from biology.
@@ -321,6 +250,23 @@ npm install && npm test
 Commit messages here are prose explaining the *why* and the failure being fixed, rather
 than a conventional-commit prefix. [`AGENTS.md`](AGENTS.md) has the conventions,
 including how releases work.
+
+## Telemetry
+
+On unless you say otherwise. `lethe init` says so once, in a terminal; if you opt
+out, nothing is sent. What leaves the machine is one summary per completed day:
+counts of sessions, recalls, notes, confirmations and consolidations, the lethe version,
+and which kind of host connected, from a fixed list. It never sends a query, a memory, a
+path, a repository, a user or machine name, or any id that outlives one server process.
+
+```sh
+lethe telemetry          # on or off, why, and the exact JSON waiting to be sent
+lethe telemetry off      # or DO_NOT_TRACK=1, or LETHE_TELEMETRY=0, which beat any setting
+```
+
+The collector is in [`telemetry/`](telemetry/). It refuses anything that is not that
+exact shape and stores no addresses. Request logging is off on the platform as well.
+`LETHE_TELEMETRY_URL` points lethe at a collector you run yourself.
 
 ## The rule
 

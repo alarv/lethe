@@ -11,6 +11,31 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-16
+
+### Changed
+
+- **Telemetry is now opt-out.** Lethe sends its anonymous daily counts unless you
+  stop it — `lethe telemetry off`, `DO_NOT_TRACK=1`, or `LETHE_TELEMETRY=0`, all
+  of which beat any earlier yes. `lethe init` says so once instead of asking
+  permission. What is sent is unchanged (counts only, never queries or paths),
+  and an explicit off is never overridden. With two or three users the opt-in
+  default meant the public dashboard showed one machine; the promise it breaks
+   is worth less than knowing whether the thing works for anyone else.
+
+### Added
+
+- **The telemetry collector serves a public dashboard.** `GET /` on the worker
+  renders install-days, sessions, adoption, recalls, notes and claims kept from
+  the opt-out daily counts, and `GET /v1/stats` returns those aggregates as JSON.
+  Only sums grouped by day and version ever leave D1 — per-install rows stay in
+  the database, and the dashboard makes no third-party requests. Same worker,
+  no new service, so there was nothing new to keep private data out of. A row of
+  health pills (adoption, recalling, answer rate, distiller, yield) grades the
+  totals green, amber or red; the pills are graded server-side inside
+  aggregate() and arrive in the stats payload, so the page renders them
+  without running logic of its own.
+
 ## [0.2.4] - 2026-10-16
 
 ### Fixed

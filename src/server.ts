@@ -470,6 +470,6 @@ export async function serve(): Promise<void> {
     store: claimDir(),
     build: buildStamp(),
   });
-  // Off the latency path and silent on failure; a no-op unless opted in.
+  // Off the latency path and silent on failure; a no-op when off.
   void flush().catch(() => {});
 }
