@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { matchExpression, terms } from "./query.js";
 
 test("tokenises the way the existing scorer does", () => {
-  assert.deepEqual(terms("Why is Docker failing?"), ["why", "docker", "failing"]);
-  assert.deepEqual(terms("a an of"), [], "tokens of 2 chars or fewer are dropped");
+  assert.deepEqual(terms("Why is Docker failing?"), ["why", "is", "docker", "failing"]);
+  assert.deepEqual(terms("Why is Docker: go/js failing?"), ["why", "is", "docker", "go", "js", "failing"]);
+  assert.deepEqual(terms("a i"), [], "single letters are noise");
 });
 
 test("builds an OR expression of quoted terms", () => {
@@ -13,7 +14,7 @@ test("builds an OR expression of quoted terms", () => {
 
 test("returns null when there is nothing to search for", () => {
   assert.equal(matchExpression(""), null);
-  assert.equal(matchExpression("a an of"), null);
+  assert.equal(matchExpression("a i"), null);
   assert.equal(matchExpression("!!! ??? ..."), null);
 });
 

@@ -142,19 +142,42 @@ function capture(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<s
     const child = spawn(cmd, args, { env, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     let err = "";
+    let bytes = 0;
+    let truncated = false;
+    const MAX_BYTES = 1_000_000; // 1MB cap: a rogue CLI must not OOM the server
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`${cmd} timed out after ${TIMEOUT_MS}ms`));
     }, TIMEOUT_MS);
 
-    child.stdout.on("data", (d) => (out += d));
-    child.stderr.on("data", (d) => (err += d));
+    child.stdout.on("data", (d: Buffer) => {
+      bytes += d.length;
+      if (bytes > MAX_BYTES) {
+        truncated = true;
+        child.kill("SIGKILL");
+        return;
+      }
+      out += d;
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      bytes += d.length;
+      if (bytes > MAX_BYTES) {
+        truncated = true;
+        child.kill("SIGKILL");
+        return;
+      }
+      err += d;
+    });
     child.on("error", (e) => {
       clearTimeout(timer);
       reject(e);
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (truncated) {
+        reject(new Error(`${cmd} output exceeded 1MB; treating as failure`));
+        return;
+      }
       if (code === 0) resolve(out.trim());
       else {
         const detail = failureDetail(err, out);

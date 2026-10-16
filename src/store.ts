@@ -116,17 +116,38 @@ export function findProjectRoot(start = process.cwd()): string | null {
 /**
  * Directory name for a project's store.
  *
- * The full path, slugified. Using only the basename would collide -- everyone
- * has more than one repo called `api` -- and appending a hash to the basename
- * fixes that at the cost of being unreadable, which matters because you end up
- * looking at these directories when something goes wrong. Encoding the whole
- * path is unique by construction and stays legible. Same convention as
- * ~/.claude/projects.
+ * The full path, slugified, plus a hash of the path. Slug alone collides:
+ * `/foo/bar` and `/foo-bar` flatten identically, and basename-only schemes
+ * collide on every `api` repo. The hash makes it unique by construction while
+ * the slug keeps it legible when debugging. Same readability goal as
+ * ~/.claude/projects, without the collision.
  */
 export function projectKey(root: string): string {
-  return root.replace(/[^a-zA-Z0-9]+/g, "-").replace(/-+$/, "").toLowerCase();
+  const slugPart = root
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase()
+    .slice(0, 48) || "project";
+  const hash = createHash("sha256").update(root).digest("hex").slice(0, 8);
+  return `${slugPart}-${hash}`;
 }
 
+/** Minimum prefix length accepted for id resolution. Shorter never matches. */
+export const MIN_ID_PREFIX = 4;
+
+/** Thrown when an id prefix matches more than one memory. */
+export class AmbiguousIdError extends Error {
+  candidates: string[];
+  constructor(candidates: string[]) {
+    super(`ambiguous id prefix matches ${candidates.length} memories; provide more characters`);
+    this.candidates = candidates;
+  }
+}
+
+/** The 0.3 name: full-path slug with no hash (collides on /foo/bar vs /foo-bar). */
+function slugOnlyKey(root: string): string {
+  return root.replace(/[^a-zA-Z0-9]+/g, "-").replace(/-+$/, "").toLowerCase();
+}
 /** The pre-0.1 name: basename plus a hash of the path. */
 function legacyProjectKey(root: string): string {
   const hash = createHash("sha256").update(root).digest("hex").slice(0, 8);
@@ -135,13 +156,19 @@ function legacyProjectKey(root: string): string {
 }
 
 /**
- * Move a store from the old hashed name if it is still there. Renaming on read
+ * Move a store from an old name if it is still there. Renaming on read
  * keeps existing memories reachable without asking anyone to run a migration.
  */
 function migrate(home: string, root: string): void {
-  const from = join(home, "projects", legacyProjectKey(root));
   const to = join(home, "projects", projectKey(root));
-  if (from === to || !existsSync(from)) return;
+  const candidates = [
+    join(home, "projects", legacyProjectKey(root)),
+    join(home, "projects", slugOnlyKey(root)),
+  ].filter((p) => p !== to && existsSync(p));
+  for (const from of candidates) moveDir(from, to);
+}
+
+function moveDir(from: string, to: string): void {
   try {
     if (!existsSync(to)) {
       mkdirSync(dirname(to), { recursive: true });
@@ -408,6 +435,17 @@ class Dynamics {
   set(id: string, d: Dyn): void {
     this.load();
     this.data[id] = d;
+    this.flush();
+  }
+
+  /** Batch update without a disk write per id: one merge + one write. */
+  setMany(entries: [string, Dyn][]): void {
+    this.load();
+    for (const [id, d] of entries) this.data[id] = d;
+    this.flush();
+  }
+
+  private flush(): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true });
       // Re-read before writing: another server may have recorded a confirmation
@@ -577,9 +615,28 @@ export class Store {
    */
   get(id: string): Memory | null {
     const all = this.all();
-    const found = all.find((m) => m.id === id || m.id.startsWith(id))
-      ?? all.find((m) => m.provenance.some((p) => p === id || p.startsWith(id)));
+    const found = this.resolve(all, id);
     return found ? follow(found, new Map(all.map((m) => [m.id, m]))) : null;
+  }
+
+  /**
+   * Exact id first; otherwise a prefix of at least MIN_ID_PREFIX characters.
+   * Shorter never matches, so `forget a` cannot delete an arbitrary memory.
+   * More than one match throws AmbiguousIdError -- the caller must ask for
+   * more characters rather than guess. Provenance fallback follows the same
+   * rules, so an old id still resolves after compaction or `correct`.
+   */
+  private resolve(all: Memory[], id: string): Memory | null {
+    const exact = all.find((m) => m.id === id);
+    if (exact) return exact;
+    if (id.length < MIN_ID_PREFIX) return null;
+    const hits = all.filter((m) => m.id.startsWith(id));
+    if (hits.length === 1) return hits[0] ?? null;
+    if (hits.length > 1) throw new AmbiguousIdError(hits.map((m) => m.id));
+    const via = all.filter((m) => m.provenance.some((p) => p === id || (id.length >= MIN_ID_PREFIX && p.startsWith(id))));
+    if (via.length === 1) return via[0] ?? null;
+    if (via.length > 1) throw new AmbiguousIdError(via.map((m) => m.id));
+    return null;
   }
 
   /**
@@ -627,11 +684,41 @@ export class Store {
    * be the worst possible reading of the request.
    */
   remove(id: string): boolean {
-    const m = this.all().find((x) => x.id === id || x.id.startsWith(id));
+    const all = this.all();
+    const m = this.resolve(all, id);
     if (!m) return false;
-    rmSync(this.pathFor(m), { force: true });
+    // Delete the actual file on disk, found by scanning -- not the
+    // reconstructed `id-slug(title)` path, which misses after a retitle and
+    // would report success while leaving the file behind.
+    let deleted = false;
+    for (const dir of this.myDirs()) {
+      let names: string[];
+      try {
+        names = readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        if (!name.endsWith(".md")) continue;
+        const path = join(dir, name);
+        let parsed: Memory | null = null;
+        try {
+          parsed = parse(readFileSync(path, "utf8"));
+        } catch {
+          continue;
+        }
+        if (parsed?.id === m.id) {
+          try {
+            rmSync(path, { force: true });
+            deleted = true;
+          } catch {
+            // fall through to return status below
+          }
+        }
+      }
+    }
     this.dyn.drop(m.id);
-    return true;
+    return deleted;
   }
 
   create(input: {
@@ -677,12 +764,32 @@ export class Store {
    * write, which is also what makes reconsolidation possible at all.
    */
   touch(m: Memory, amount = 0.1): Memory {
-    m.accessCount += 1;
-    m.strength = Math.min(2, m.strength + amount);
-    m.lastAccessed = new Date().toISOString();
-    // Reinforcement is per-machine, so this must not rewrite the shared file.
-    this.saveDynamics(m);
+    this.touchAll([m], amount);
     return m;
+  }
+
+  /**
+   * Reinforcement for a batch of hits in a single dynamics.json write.
+   * Recall returns up to 8 hits; writing the sidecar 8 times per recall is
+   * a lost-update race as well as waste. One merge + one write instead.
+   */
+  touchAll(memories: Memory[], amount = 0.1): Memory[] {
+    const now = new Date().toISOString();
+    const entries: [string, { strength: number; accessCount: number; lastAccessed: string | null; decayedAt: string; confirmedBy: string[] }][] = [];
+    for (const m of memories) {
+      m.accessCount += 1;
+      m.strength = Math.min(2, m.strength + amount);
+      m.lastAccessed = now;
+      entries.push([m.id, {
+        strength: m.strength,
+        accessCount: m.accessCount,
+        lastAccessed: m.lastAccessed,
+        decayedAt: m.decayedAt,
+        confirmedBy: m.confirmedBy,
+      }]);
+    }
+    this.dyn.setMany(entries);
+    return memories;
   }
 
   /** Persist only the per-machine half. */
@@ -863,7 +970,7 @@ export class Store {
    * other retrieval changes landing alongside it.
    */
   searchNaive(query: string, limit = 8, paths: string[] = []): Memory[] {
-    const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2);
+    const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 2);
     const rank = (pool: Memory[]) =>
       pool
         .filter((m) => !m.supersededBy)

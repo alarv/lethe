@@ -32,12 +32,27 @@ export const STOP = new Set([
   "made", "need", "needs", "like", "want", "know", "see", "say", "says",
 ]);
 
+/** Two characters keep go/js/db/ai/os; single letters are noise. */
+const MIN_TERM_LEN = 2;
+/** FTS MATCH blows up on hundreds of ORs; callers send natural language. */
+const MAX_MATCH_TERMS = 50;
+
 /** The same tokenisation the naive scorer uses, so both paths agree on a term. */
 export function terms(query: string): string[] {
   return query
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((t) => t.length > 2);
+    .filter((t) => t.length >= MIN_TERM_LEN);
+}
+
+/** Stemmed token set of a body of text, for exact-token admission checks. */
+function tokenSet(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const t of text.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (t.length < MIN_TERM_LEN) continue;
+    out.add(stem(t));
+  }
+  return out;
 }
 
 /**
@@ -69,7 +84,7 @@ export function contentTerms(query: string): string[] {
 
 /** Null means there is nothing to search for; the caller must skip the index. */
 export function matchExpression(query: string): string | null {
-  const found = terms(query);
+  const found = terms(query).slice(0, MAX_MATCH_TERMS);
   if (!found.length) return null;
   return found.map((t) => `"${t}"`).join(" OR ");
 }
@@ -108,15 +123,15 @@ const RARE_TERM_FRACTION = 0.25;
 /**
  * How many distinct query terms this memory actually contains.
  *
- * Substring matching is right here even though it is wrong for ranking: the
- * question is whether the term is present at all, and the porter stemmer means
- * "running" in the query should count against "run" in the body.
+ * Token equality, not substring: `test` must not match `latest` or
+ * `contest`. The porter stemmer still collides `running`/`run`, which is
+ * handled by stemming both sides into a token set.
  */
 export function termCoverage(text: string, queryTerms: string[]): number {
-  const haystack = text.toLowerCase();
+  const tokens = tokenSet(text);
   let hit = 0;
   for (const t of new Set(queryTerms.map(stem))) {
-    if (haystack.includes(t)) hit += 1;
+    if (tokens.has(t)) hit += 1;
   }
   return hit;
 }
@@ -132,10 +147,11 @@ export function documentFrequency(
   corpus: { title: string; body: string }[],
   queryTerms: string[],
 ): Map<string, number> {
+  const sets = corpus.map((m) => tokenSet(`${m.title} ${m.body}`));
   const df = new Map<string, number>();
   for (const t of new Set(queryTerms.map(stem))) {
     let n = 0;
-    for (const m of corpus) if (`${m.title} ${m.body}`.toLowerCase().includes(t)) n += 1;
+    for (const s of sets) if (s.has(t)) n += 1;
     df.set(t, n);
   }
   return df;
@@ -175,11 +191,11 @@ export function admit<T extends { title: string; body: string }>(
   const rareCutoff = total * RARE_TERM_FRACTION;
 
   return found.filter((m) => {
-    const text = `${m.title} ${m.body}`.toLowerCase();
+    const tokens = tokenSet(`${m.title} ${m.body}`);
     let covered = 0;
     let rareHit = false;
     for (const t of new Set(queryTerms.map(stem))) {
-      if (!text.includes(t)) continue;
+      if (!tokens.has(t)) continue;
       covered += 1;
       const seen = df.get(t);
       if (seen !== undefined && seen > 0 && seen <= rareCutoff) rareHit = true;

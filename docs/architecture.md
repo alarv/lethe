@@ -164,7 +164,7 @@ project:
   maintenance passes at all.
 - **Vector search** needs an index, in the same store, without running a service.
 
-So: `better-sqlite3` + `sqlite-vec`, one gitignored file, treated as a **build
+So: `node:sqlite` FTS5 (porter, contentless), one gitignored file, treated as a **build
 artifact**. Same relationship as `package.json` → `node_modules`. Delete it and
 `lethe index` reconstructs it from the markdown in seconds. The markdown is what you
 own; the database is what makes it fast.
@@ -394,6 +394,7 @@ that speaks MCP. Provisional tools:
 | `confirm` | This memory was right → strengthen. |
 | `correct` | This memory is wrong → supersede. |
 | `forget` | Explicit removal. |
+| `learn` | Seed repo conventions as weak claims. |
 
 `confirm` and `correct` are reconsolidation (`docs/brain.md` §6). Retrieval
 returning ids is what makes them possible: an agent that discovers a memory is stale can
@@ -403,8 +404,8 @@ fix it in place, instead of the store accumulating confident falsehoods.
 
 - **Not an agent runtime.** We do not own the loop. We are a memory layer any harness
   can use.
-- **No hosted service, no telemetry.** Local-first. The memories contain proprietary
-  source.
+- **No hosted service for memory.** Local-first. The memories contain proprietary
+  source. Anonymous usage counts are opt-out telemetry; see `lethe telemetry --help`.
 - **No archetypes.** Memory policy as configuration is a real idea, but it is config
   over a core that has to be right first.
 - **No web UI.** The diff is the UI.

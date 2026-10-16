@@ -196,15 +196,26 @@ export class MemoryIndex {
       if (seen.has(f.path)) continue;
       seen.add(f.path);
       const k = known.get(f.path);
-      if (!k || k.mtime !== f.mtimeMs || k.size !== f.size) stale.push(f);
+      // mtimeMs is a float; SQLite REAL round-trips it with error, so exact
+      // equality reindexed everything forever. 1ms tolerance + size is enough:
+      // writes go through temp+rename, which always moves mtime forward.
+      if (!k || Math.abs(k.mtime - f.mtimeMs) >= 1 || k.size !== f.size) stale.push(f);
     }
     const gone = [...known.entries()].filter(([path]) => !seen.has(path));
 
     if (!stale.length && !gone.length) return;
 
-    let nextRowid = Number(
-      Object.values(this.db.prepare("SELECT MAX(rowid) AS max FROM memories").get() ?? {})[0] ?? 0,
-    ) + 1;
+    // Read files BEFORE opening a transaction. File I/O inside BEGIN...COMMIT
+    // holds the write lock while the disk is read, blocking every other
+    // session for the duration. Preload here; the txn below touches only SQL.
+    const loaded = new Map<string, Memory | null>();
+    for (const f of stale) {
+      try {
+        loaded.set(f.path, load(f));
+      } catch {
+        loaded.set(f.path, null);
+      }
+    }
 
     this.db.exec("BEGIN");
     try {
@@ -217,6 +228,14 @@ export class MemoryIndex {
         `INSERT INTO memories(rowid, id, path, mtime, size, project, kind, updated, superseded_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
+      // Rowids of replaced files are reused so the fts b-tree does not grow
+      // sparse; new files let SQLite assign rowid (AUTOINCREMENT via NULL),
+      // which is race-safe unlike a manual MAX(rowid)+1 counter.
+      const addMetaAuto = this.db.prepare(
+        `INSERT INTO memories(id, path, mtime, size, project, kind, updated, superseded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const lastId = this.db.prepare("SELECT last_insert_rowid() AS id");
 
       for (const [, k] of gone) {
         dropFts.run(k.rowid);
@@ -229,14 +248,18 @@ export class MemoryIndex {
           dropFts.run(existing.rowid);
           dropMeta.run(existing.rowid);
         }
-        const m = load(f);
+        const m = loaded.get(f.path);
         if (!m) continue; // unreadable or not a memory; the row stays deleted
-        // Reuse the rowid of the file being replaced. Growing it forever would
-        // leave the fts b-tree sparse for no reason.
-        const rowid = existing ? existing.rowid : nextRowid++;
-        addFts.run(rowid, m.title, m.body, m.tags.join(" "), m.files.join(" "));
-        addMeta.run(rowid, m.id, f.path, f.mtimeMs, f.size, f.project, m.kind, m.updated,
-          m.supersededBy ?? null);
+        if (existing) {
+          addFts.run(existing.rowid, m.title, m.body, m.tags.join(" "), m.files.join(" "));
+          addMeta.run(existing.rowid, m.id, f.path, f.mtimeMs, f.size, f.project, m.kind, m.updated,
+            m.supersededBy ?? null);
+        } else {
+          addMetaAuto.run(m.id, f.path, f.mtimeMs, f.size, f.project, m.kind, m.updated,
+            m.supersededBy ?? null);
+          const rowid = Number((lastId.get() as { id?: unknown } | undefined)?.id ?? 0);
+          addFts.run(rowid, m.title, m.body, m.tags.join(" "), m.files.join(" "));
+        }
       }
       this.db.exec("COMMIT");
     } catch (e) {

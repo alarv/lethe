@@ -192,9 +192,7 @@ export async function promptHook(): Promise<void> {
     // wanted. Matching a prompt is not the same as having helped, and
     // reinforcing both equally would push everything to maximum strength and
     // stop strength ordering anything.
-    for (const m of found) {
-      if (!m.fromProject) store.touch(m, HOOK_REINFORCEMENT);
-    }
+    store.touchAll(found.filter((m) => !m.fromProject), HOOK_REINFORCEMENT);
 
     const rendered = renderMemories(found);
     if (rendered) process.stdout.write(`${rendered}\n`);

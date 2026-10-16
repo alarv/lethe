@@ -185,13 +185,22 @@ async function run(condition: Condition, tasks: Task[], mechanism: Mechanism): P
  * them concurrently let them collide in a single store -- which showed up as
  * every condition scoring identically, including the one with no memories.
  */
+/** Repetitions per condition. docs/evals.md requires n>=5 same-model runs; retrieval is deterministic for a fixed store, so repeats guard against store-build nondeterminism (ids, tiebreaks) rather than sampling noise. */
+export const REPEATS = 5;
+
 async function runAll(
   conditions: Condition[],
   tasks: Task[],
   mechanism: Mechanism,
 ): Promise<Result[]> {
   const out: Result[] = [];
-  for (const c of conditions) out.push(await run(c, tasks, mechanism));
+  for (const c of conditions) {
+    const reps: Result[] = [];
+    for (let i = 0; i < REPEATS; i++) reps.push(await run(c, tasks, mechanism));
+    const avg = (f: (r: Result) => number) => reps.reduce((s, r) => s + f(r), 0) / reps.length;
+    const first = reps[0]!;
+    out.push({ ...first, hit1: avg((r) => r.hit1), hit3: avg((r) => r.hit3), hit5: avg((r) => r.hit5), mrr: avg((r) => r.mrr), costToAnswer: avg((r) => r.costToAnswer), precision: avg((r) => r.precision), offTopic: avg((r) => r.offTopic) });
+  }
   return out;
 }
 
@@ -242,7 +251,7 @@ async function main(): Promise<void> {
   const mechanisms: Mechanism[] = asked === "both" || asked === "all"
     ? ["naive", "fts5", "recall"] : [asked as Mechanism];
 
-  console.log(`lethe retrieval eval — ${all.length} tasks, top-${K}`);
+  console.log(`lethe retrieval eval — ${all.length} tasks x${REPEATS} repeats, top-${K}`);
   console.log("compact vs raw is the comparison that matters; cold is the floor.");
 
   for (const mechanism of mechanisms) {

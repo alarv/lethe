@@ -46,7 +46,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { Memory, Store } from "./store.js";
 
 /**
@@ -139,13 +139,29 @@ retrieval slot until it does.`;
 
 // ---------------------------------------------------------------------- gate
 
-/** Reads a repo-relative file, or null. */
+/** Repo-relative and contained: no absolutes, no `..` escapes. */
+function contained(root: string, rel: string): string | null {
+  if (!rel || rel.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(rel)) return null;
+  const abs = resolve(join(root, rel));
+  const base = resolve(root);
+  if (abs !== base && !abs.startsWith(base + sep)) return null;
+  return abs;
+}
+
+/** Reads a repo-relative file, or null. Contained to root. */
 function text(root: string, rel: string): string | null {
+  const abs = contained(root, rel);
+  if (!abs) return null;
   try {
-    return readFileSync(join(root, rel), "utf8");
+    return readFileSync(abs, "utf8");
   } catch {
     return null;
   }
+}
+
+function clampSalience(n: unknown): number {
+  const v = typeof n === "number" && Number.isFinite(n) ? n : 0.5;
+  return Math.min(1, Math.max(0, v));
 }
 
 /**
@@ -183,7 +199,7 @@ const SECRETS = /(?:^|\/)(?:\.env|\.npmrc|\.netrc|\.pypirc|\.git-credentials|cre
  * would reject correct facts drawn from any JSON manifest.
  */
 export function cited(fact: Fact, root: string): boolean {
-  const present = fact.files.filter((f) => existsSync(join(root, f)));
+  const present = fact.files.filter((f) => contained(root, f) && existsSync(contained(root, f)!));
   if (!present.length) return false;
 
   const hay = present
@@ -210,6 +226,7 @@ export function gate(facts: Fact[], root: string): { kept: Fact[]; rejected: Rej
   const rejected: Rejection[] = [];
 
   for (const fact of facts) {
+    fact.salience = clampSalience(fact.salience);
     if (!fact.key.trim() || !fact.title.trim() || !fact.body.trim()) {
       rejected.push({ fact, reason: "missing a key, title or body" });
       continue;
@@ -218,13 +235,21 @@ export function gate(facts: Fact[], root: string): { kept: Fact[]; rejected: Rej
       rejected.push({ fact, reason: "cites no file" });
       continue;
     }
-    const secret = fact.files.find((f) => SECRETS.test(f));
+    const escaped = fact.files.find((f) => !contained(root, f));
+    if (escaped) {
+      rejected.push({ fact, reason: `cites a file outside the repository: ${escaped}` });
+      continue;
+    }
+    const secret = [...fact.files, ...fact.quoted].find((f) => SECRETS.test(f));
     if (secret) {
       rejected.push({ fact, reason: `cites a file that may hold credentials: ${secret}` });
       continue;
     }
-    const missing = fact.files.filter((f) => !existsSync(join(root, f)));
-    if (missing.length === fact.files.length) {
+    const missing = fact.files.filter((f) => {
+      const abs = contained(root, f)!;
+      return !existsSync(abs);
+    });
+    if (missing.length) {
       rejected.push({ fact, reason: `cites files that do not exist: ${missing.join(", ")}` });
       continue;
     }
@@ -232,7 +257,7 @@ export function gate(facts: Fact[], root: string): { kept: Fact[]; rejected: Rej
       rejected.push({ fact, reason: "a quoted value does not appear in the file it cites" });
       continue;
     }
-    const outward = OUTWARD.exec(`${fact.title}\n${fact.body}`);
+    const outward = OUTWARD.exec(`${fact.title}\n${fact.body}\n${fact.quoted.join("\n")}`);
     if (outward) {
       rejected.push({ fact, reason: `names an outward-facing command: ${outward[0]}` });
       continue;

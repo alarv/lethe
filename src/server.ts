@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Store, author, claimDir, episodeDir, type Memory } from "./store.js";
+import { Store, AmbiguousIdError, author, claimDir, episodeDir, type Memory } from "./store.js";
 import { compact, type Distiller } from "./compact.js";
 import { repairLeakedArgs } from "./repair.js";
 import { type Brief, brief } from "./brief.js";
@@ -182,8 +182,13 @@ export function createServer(cwd = process.cwd()): McpServer {
    * awaiting it here would stall the tool call that triggered it -- exactly the
    * latency path compaction is supposed to stay off. Results go to the log.
    */
+  let lastPressureCheck = 0;
   function relievePressure(): void {
     if (compacting) return;
+    // Writes are hot; a full parse on every note is O(corpus) per write.
+    // Throttle the check itself: at most once per 5 minutes per server.
+    if (Date.now() - lastPressureCheck < 5 * 60 * 1000) return;
+    lastPressureCheck = Date.now();
     const episodes = store.all().filter((m) => m.kind === "episode" && !m.supersededBy);
     if (!episodes.length) return;
 
@@ -248,7 +253,7 @@ export function createServer(cwd = process.cwd()): McpServer {
       // and one of them was in all 8 real recalls, on any topic. Being returned
       // is not evidence of being useful; confirm is (0.4). accessCount still
       // moves, which frequency-driven consolidation depends on.
-      for (const m of hits) if (!m.fromProject) store.touch(m, RECALL_REINFORCEMENT);
+      store.touchAll(hits.filter((m) => !m.fromProject), RECALL_REINFORCEMENT);
       log("recall", JSON.stringify(query), {
         hits: hits.length,
         // Lets a later confirm be matched back to the recall that surfaced it --
@@ -378,14 +383,22 @@ export function createServer(cwd = process.cwd()): McpServer {
     { id: z.string() },
     async ({ id }) => {
       await ensureBound();
-      const m = store.get(id);
+      let m: Memory | null;
+      try {
+        m = store.get(id);
+      } catch (e) {
+        if (e instanceof AmbiguousIdError) {
+          return { content: [{ type: "text", text: `ambiguous id ${id} — provide more characters` }], isError: true };
+        }
+        throw e;
+      }
       if (!m) {
         return {
           content: [{ type: "text", text: `no memory ${id} — it may have been compacted; recall again for current ids` }],
           isError: true,
         };
       }
-      store.touch(m, 0.4);
+      store.confirm(m, author());
       log("confirm", m.title, { id: m.id.slice(0, 8), strength: m.strength.toFixed(2) });
       return { content: [{ type: "text", text: `confirmed [${m.id.slice(0, 8)}]` }] };
     },
@@ -402,7 +415,15 @@ export function createServer(cwd = process.cwd()): McpServer {
     },
     async ({ id, title, body }) => {
       await ensureBound();
-      const old = store.get(id);
+      let old: Memory | null;
+      try {
+        old = store.get(id);
+      } catch (e) {
+        if (e instanceof AmbiguousIdError) {
+          return { content: [{ type: "text", text: `ambiguous id ${id} — provide more characters` }], isError: true };
+        }
+        throw e;
+      }
       if (!old) {
         return {
           content: [{ type: "text", text: `no memory ${id} — it may have been compacted; recall again for current ids` }],
@@ -438,7 +459,15 @@ export function createServer(cwd = process.cwd()): McpServer {
     { id: z.string() },
     async ({ id }) => {
       await ensureBound();
-      const removed = store.remove(id);
+      let removed: boolean;
+      try {
+        removed = store.remove(id);
+      } catch (e) {
+        if (e instanceof AmbiguousIdError) {
+          return ({ content: [{ type: "text", text: `ambiguous id ${id} — provide more characters` }], isError: true });
+        }
+        throw e;
+      }
       // Logged so metrics can see it at all: forget was the one tool call that
       // left no trace, which made "never called" unfalsifiable.
       if (removed) log("forget", id.slice(0, 8), { id: id.slice(0, 8) });

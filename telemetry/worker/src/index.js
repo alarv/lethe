@@ -1,5 +1,5 @@
 /**
- * Collector for lethe's opt-in daily usage counts.
+ * Collector for lethe's opt-out daily usage counts.
  *
  * The endpoint is public, so it trusts nothing it is sent. A body is accepted
  * only if it is exactly the summary lethe builds (src/telemetry.ts): the known
@@ -202,7 +202,7 @@ td,th{border-bottom:1px solid #eee;text-align:right;padding:.25rem .5rem;font-va
 td:first-child,th:first-child{text-align:left}.bar{background:#4a7;height:8px;border-radius:2px;min-width:2px}
 </style></head><body>
 <h1>lethe telemetry</h1>
-<p class="sub">Opt-in daily counts only: sessions, recalls, notes, compactions. No queries, paths, or ids ever leave a machine. <a href="https://github.com/alarv/lethe/tree/main/telemetry">collector source</a>.</p>
+<p class="sub">Opt-out daily counts only: sessions, recalls, notes, compactions. No queries, paths, or ids ever leave a machine. <a href="https://github.com/alarv/lethe/tree/main/telemetry">collector source</a>.</p>
 <div class="pills" id="pills"></div>
 <div class="cards" id="cards"></div>
 <h2>by day</h2><table id="days"><tr><th>day</th><th>installs</th><th>sessions</th><th>recalls</th><th>notes</th><th>kept</th></tr></table>

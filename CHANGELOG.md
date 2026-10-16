@@ -11,6 +11,47 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-16
+
+### Fixed
+
+- **Id prefixes can no longer delete the wrong memory.** `get`/`remove` need an
+  exact id or a prefix of at least 4 characters, and an ambiguous prefix is an
+  error instead of the first arbitrary hit — `lethe forget a` now says not
+  found. `remove` deletes the actual file found by directory scan, not the
+  reconstructed `id-slug(title)` path, so a retitled memory is really gone.
+- **Project directories no longer collide.** `projectKey` is slug plus an 8-char
+  hash of the path, so `/foo/bar` and `/foo-bar` get different episode stores;
+  old directories are renamed/merged on read.
+- **`confirm` corroborates again.** The tool calls `store.confirm` with the
+  author identity instead of `touch`, so `confirmedBy` populates and promotion
+  to pattern on two confirmers is reachable.
+- **Admission checks tokens, not substrings.** `test` no longer matches
+  `latest`; 2-char code tokens (`go`, `js`, `db`, `ai`, `os`) are kept; FTS
+  MATCH is clamped to 50 terms.
+- **Index sync no longer holds the write lock while reading files**, compares
+  mtime with 1ms tolerance, and lets SQLite assign rowids instead of a manual
+  `MAX(rowid)+1` counter.
+- **`learn` contains cited files to the repo** (no absolutes, no `..` escapes),
+  rejects any missing citation (not just all-missing), checks `quoted` for
+  secrets/outward commands too, and clamps salience to [0,1].
+- **Compaction is locked and journaled.** An exclusive `compact.lock` stops
+  double-consolidate/double-promote across CLI + MCP servers; a
+  `compact.journal.json` finishes cold-marking after a crash instead of writing
+  a duplicate claim. Revisions inherit max strength, and `--deep` skips claims
+  still cited in provenance.
+- **Writes are cheaper.** Recall/hook reinforcement batches to one
+  `dynamics.json` write per call, and the pressure check runs at most every 5
+  minutes instead of a full parse on every note. Distiller output is capped at
+  1MB.
+- **Docs say what the code does.** Architecture names `node:sqlite` FTS5
+  (porter, contentless) instead of `better-sqlite3 + sqlite-vec`, lists all six
+  tools, and says telemetry is opt-out; the collector README and dashboard say
+  opt-out too.
+- **Evals repeat.** Each condition runs 5 times and reports the mean, per
+  `docs/evals.md n>=5`. Requires Node `>=22.18` (early 22 needs
+  `--experimental-sqlite` for `node:sqlite`).
+
 ## [0.3.0] - 2026-10-16
 
 ### Changed

@@ -6,7 +6,7 @@
  * inspecting the store by hand while dogfooding.
  */
 
-import { Store, claimDir, episodeDir, findProjectRoot, legacyClaimDir, letheHome, readSource } from "./store.js";
+import { Store, AmbiguousIdError, claimDir, episodeDir, findProjectRoot, legacyClaimDir, letheHome, readSource } from "./store.js";
 import { composition, distillerHealth, formatComposition, formatMetrics, metrics, readLog, since } from "./metrics.js";
 
 /** Mirrors the server's threshold, so status and metrics agree with the trigger. */
@@ -985,7 +985,15 @@ whether this is what moved adoption.`);
         console.error("usage: lethe forget <id>");
         process.exit(1);
       }
-      console.log(store.remove(id) ? "forgotten" : "not found");
+      try {
+        console.log(store.remove(id) ? "forgotten" : "not found");
+      } catch (e) {
+        if (e instanceof AmbiguousIdError) {
+          console.error(`ambiguous id ${id} — provide more characters`);
+          process.exit(1);
+        }
+        throw e;
+      }
       return;
     }
 

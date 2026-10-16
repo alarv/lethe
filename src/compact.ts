@@ -13,6 +13,9 @@ import { log } from "./log.js";
 import { selectForEviction } from "./evict.js";
 import { prune, survey } from "./maintain.js";
 import { consolidate } from "./consolidate.js";
+import { letheHome } from "./store.js";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 /** Asks a model for a completion. Supplied by the MCP host via sampling. */
 export type Distiller = (prompt: string) => Promise<string>;
@@ -30,9 +33,68 @@ function episodesWaiting(store: Store): number {
   return store.all().filter((m) => m.kind === "episode" && !m.supersededBy).length;
 }
 
+function lockPath(): string {
+  return join(letheHome(), "compact.lock");
+}
+
+function journalPath(): string {
+  return join(letheHome(), "compact.journal.json");
+}
+
+/** Exclusive lock via atomic mkdir. Returns release fn, or null if held. */
+function acquireLock(): (() => void) | null {
+  const dir = lockPath();
+  try {
+    mkdirSync(dir);
+  } catch {
+    return null;
+  }
+  try {
+    writeFileSync(join(dir, "pid"), String(process.pid), "utf8");
+  } catch {
+    /* pid file cosmetic */
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
+  };
+}
+
+interface Journal {
+  /** Claim ids written but whose sources may not yet be marked cold. */
+  pending: { claimId: string; sources: string[] }[];
+}
+
+function readJournal(): Journal {
+  try {
+    return JSON.parse(readFileSync(journalPath(), "utf8")) as Journal;
+  } catch {
+    return { pending: [] };
+  }
+}
+
+function writeJournal(j: Journal): void {
+  try {
+    mkdirSync(dirname(journalPath()), { recursive: true });
+    const tmp = `${journalPath()}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(j), "utf8");
+    renameSync(tmp, journalPath());
+  } catch {
+    /* journal best-effort; consolidation remains retryable */
+  }
+}
+
 export interface CompactReport {
   /** Consolidation was skipped because no model was available to distil. */
   skippedNoModel: boolean;
+  /** Consolidation was skipped because another compaction holds the lock. */
+  skippedLocked?: boolean;
   clustered: number;
   episodesConsumed: number;
   claimsWritten: number;
@@ -115,6 +177,71 @@ export async function compact(
   };
   const now = Date.now();
 
+  // Exclusive lock: two MCP servers + CLI must not double-consolidate,
+  // double-promote, or double-decay. A stale lock from a crash is cleared by
+  // age (10 min) rather than held forever.
+  if (!dryRun) {
+    const release = acquireLock();
+    if (!release) {
+      report.skippedLocked = true;
+      report.changes.push("compaction already running -- skipped");
+      log("compact", "skipped: lock held");
+      return report;
+    }
+    try {
+      return await compactInner(store, opts, report, now);
+    } finally {
+      release();
+    }
+  }
+  return compactInner(store, opts, report, now);
+}
+
+async function compactInner(
+  store: Store,
+  opts: CompactOptions,
+  report: CompactReport,
+  now: number,
+): Promise<CompactReport> {
+  const { distil, dryRun = false, deep = false } = opts;
+
+  // Journal recovery: a crash between `create` and marking sources cold left
+  // a claim whose sources still look unconsumed. Finish that work instead of
+  // distilling a duplicate claim next run.
+  if (!dryRun) {
+    const journal = readJournal();
+    if (journal.pending.length) {
+      const byId = new Map(store.all().map((m) => [m.id, m]));
+      const remaining: Journal["pending"] = [];
+      for (const p of journal.pending) {
+        const claim = byId.get(p.claimId);
+        if (!claim) continue; // claim gone; nothing to finish
+        let done = true;
+        for (const sid of p.sources) {
+          const s = byId.get(sid);
+          if (s && !s.supersededBy) {
+            s.supersededBy = p.claimId;
+            try {
+              store.write(s);
+            } catch {
+              done = false;
+            }
+          }
+        }
+        if (!done) remaining.push(p);
+        else report.changes.push(`journal: finished cold-marking for "${claim.title}"`);
+      }
+      writeJournal({ pending: remaining });
+      if (remaining.length === 0) {
+        try {
+          rmSync(journalPath(), { force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
   // 1. Consolidate -----------------------------------------------------------
   //
   // Only ever destructive when a model actually rewrote the episodes into a
@@ -161,11 +288,17 @@ export async function compact(
         // agreed on, falling back to the most salient source's own.
         tags: shared(sources.map((m) => m.tags), sources),
         files: shared(sources.map((m) => m.files), sources),
-        // A revision inherits the salience it earned; replacing a claim must
-        // not quietly demote what it knew.
+        // A revision inherits the salience AND strength it earned; replacing a
+        // claim must not quietly demote what it knew or reset earned use.
         salience: Math.max(...[...sources, ...revises].map((m) => m.salience)),
+        strength: Math.max(...[...sources, ...revises].map((m) => m.strength)),
         provenance: [...sources, ...revises].map((m) => m.id),
       });
+
+      // Journal before marking sources: a crash here must resume, not duplicate.
+      const journal = readJournal();
+      journal.pending.push({ claimId: written.id, sources: [...sources, ...revises].map((m) => m.id) });
+      writeJournal(journal);
 
       // Consumed episodes go cold rather than being deleted (docs/brain.md §7).
       // A claim is a lossy summary, so the trace stays on disk as a second route
@@ -177,6 +310,15 @@ export async function compact(
       for (const m of [...sources, ...revises]) {
         m.supersededBy = written.id;
         store.write(m);
+      }
+      // Sources marked: journal entry fulfilled.
+      writeJournal({ pending: readJournal().pending.filter((p) => p.claimId !== written.id) });
+      if (!readJournal().pending.length) {
+        try {
+          rmSync(journalPath(), { force: true });
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
@@ -202,25 +344,44 @@ export async function compact(
   }
 
   // 3. Decay -----------------------------------------------------------------
-  for (const m of store.all()) {
-    // Episodes used to be exempt, on the theory that consolidation would consume
-    // them. It does not delete them -- it marks them cold -- and it needs a
-    // distiller that is often absent, so they accumulated forever. That is how a
-    // project named for forgetting came to never forget.
-    const next = decayOne(m, now);
-    if (next < COLD && deep && m.kind !== "episode") {
-      report.purged += 1;
-      report.changes.push(`purge (cold): "${m.title}"`);
-      if (!dryRun) store.remove(m.id);
-      continue;
+  {
+    const snapshot = store.all();
+    const dependedOn = new Set<string>();
+    for (const m of snapshot) {
+      for (const p of m.provenance) dependedOn.add(p);
+      if (m.supersededBy) dependedOn.add(m.supersededBy);
     }
-    if (Math.abs(next - m.strength) < 0.001) continue;
-    report.decayed += 1;
-    if (dryRun) continue;
-    m.strength = next;
-    m.decayedAt = new Date(now).toISOString();
-    // Decay is per-machine; writing the memory would dirty a shared file.
-    store.saveDynamics(m);
+    // Reverse index: which ids point at m (traces citing it as provenance).
+    const citedBy = new Map<string, number>();
+    for (const m of snapshot) {
+      for (const p of m.provenance) citedBy.set(p, (citedBy.get(p) ?? 0) + 1);
+    }
+    for (const m of snapshot) {
+      const next = decayOne(m, now);
+      if (next < COLD && deep && m.kind !== "episode") {
+        // Never purge a claim other memories still cite: that orphans traces
+        // evict.ts then pins as never-evictable.
+        if ((citedBy.get(m.id) ?? 0) > 0 || dependedOn.has(m.id) && m.kind === "claim") {
+          // Fall through to decay rather than purge when still referenced,
+          // unless nothing references it.
+          if ((citedBy.get(m.id) ?? 0) > 0) {
+            report.changes.push(`kept (cited): "${m.title}"`);
+            continue;
+          }
+        }
+        report.purged += 1;
+        report.changes.push(`purge (cold): "${m.title}"`);
+        if (!dryRun) store.remove(m.id);
+        continue;
+      }
+      if (Math.abs(next - m.strength) < 0.001) continue;
+      report.decayed += 1;
+      if (dryRun) continue;
+      m.strength = next;
+      m.decayedAt = new Date(now).toISOString();
+      // Decay is per-machine; writing the memory would dirty a shared file.
+      store.saveDynamics(m);
+    }
   }
 
   // 4. Evict -----------------------------------------------------------------

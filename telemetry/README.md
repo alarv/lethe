@@ -1,6 +1,6 @@
 # Telemetry collector
 
-A Cloudflare Worker that receives lethe's opt-in daily usage counts and stores them in
+A Cloudflare Worker that receives lethe's opt-out daily usage counts and stores them in
 D1. What the client sends, and what it never sends, is in `src/telemetry.ts`; this
 collector refuses anything that is not exactly that shape (`worker/src/index.js`).
 
