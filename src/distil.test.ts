@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { chain, failureDetail, listDistillers, probeDistiller, resolveDistiller } from "./distil.js";
+import { chain, fallbackNote, failureDetail, listDistillers, probeDistiller, resolveDistiller } from "./distil.js";
 
 const saved = { ...process.env };
 
@@ -95,4 +95,24 @@ test("when every distiller fails the first error is the one reported", async () 
     { via: "b", distil: async () => { throw new Error("login"); } },
   ]);
   await assert.rejects(() => r!.distil("x"), /quota/);
+});
+
+test("the chain says who answered and who failed first", async () => {
+  const r = chain([
+    { via: "opencode", distil: async () => { throw new Error("quota"); } },
+    { via: "claude", distil: async () => "claim" },
+  ])!;
+  assert.equal(fallbackNote(r), null);
+  await r.distil("x");
+  assert.equal(r.last?.answeredBy, "claude");
+  assert.equal(fallbackNote(r), "answered by claude (opencode failed: quota)");
+});
+
+test("an empty reply from the first falls through and is named", async () => {
+  const r = chain([
+    { via: "a", distil: async () => "  " },
+    { via: "b", distil: async () => "ok" },
+  ])!;
+  await r.distil("x");
+  assert.equal(fallbackNote(r), "answered by b (a failed: empty reply)");
 });

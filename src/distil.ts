@@ -30,6 +30,19 @@ const GUARD = "LETHE_CHILD";
 export interface Resolved {
   distil: Distiller;
   via: string;
+  /**
+   * Set by a chain after each call: who actually answered, and who failed
+   * first. `via` names the preferred candidate, which is not always the one
+   * that did the work.
+   */
+  last?: { answeredBy: string | null; failed: { via: string; reason: string }[] };
+}
+
+/** "answered by claude (opencode failed: ...)" when a fallback did the work, else null. */
+export function fallbackNote(r: Resolved): string | null {
+  const l = r.last;
+  if (!l || !l.answeredBy || l.failed.length === 0) return null;
+  return `answered by ${l.answeredBy} (${l.failed.map((f) => `${f.via} failed: ${f.reason}`).join("; ")})`;
 }
 
 async function onPath(cmd: string): Promise<boolean> {
@@ -234,22 +247,33 @@ export async function resolveDistiller(
  */
 export function chain(all: Resolved[]): Resolved | null {
   if (all.length <= 1) return all[0] ?? null;
-  return {
+  const out: Resolved = {
     via: all[0]!.via,
     distil: async (prompt) => {
-      let first: unknown;
+      const failed: { via: string; reason: string }[] = [];
+      let firstErr: unknown;
       for (const [i, r] of all.entries()) {
+        const lastOne = i === all.length - 1;
         try {
-          const out = await r.distil(prompt);
-          if (out.trim() || i === all.length - 1) return out;
+          const text = await r.distil(prompt);
+          if (text.trim() || lastOne) {
+            out.last = { answeredBy: text.trim() ? r.via : null, failed };
+            return text;
+          }
+          failed.push({ via: r.via, reason: "empty reply" });
         } catch (e) {
-          first ??= e;
-          if (i === all.length - 1) throw first;
+          firstErr ??= e;
+          failed.push({ via: r.via, reason: e instanceof Error ? e.message : String(e) });
+          if (lastOne) {
+            out.last = { answeredBy: null, failed };
+            throw firstErr;
+          }
         }
       }
-      throw first ?? new Error("empty reply");
+      throw firstErr ?? new Error("empty reply");
     },
   };
+  return out;
 }
 
 export async function describeDistiller(): Promise<string> {

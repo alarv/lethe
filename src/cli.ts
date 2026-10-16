@@ -23,7 +23,7 @@ import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync
 import { join } from "node:path";
 import { LOG_PATH, buildStamp, logging, tail } from "./log.js";
 import { human, prune, survey } from "./maintain.js";
-import { describeDistiller, listDistillers, probeDistiller, resolveDistiller } from "./distil.js";
+import { describeDistiller, fallbackNote, listDistillers, probeDistiller, resolveDistiller } from "./distil.js";
 import { seeded } from "./learn.js";
 import { type Candidate, harvest } from "./harvest.js";
 import { spinning } from "./progress.js";
@@ -388,9 +388,9 @@ whether this is what moved adoption.`);
           problems.push(
             `The distiller resolves (${probe.via}) but cannot distil: ${probe.reason}\n` +
             (alt
-              ? `  ${alt} answered, but consolidation keeps using the broken default\n` +
-                "  first. Fix the default's quota or login -- or unset LETHE_API_KEY\n" +
-                "  if the broken path is the API one shadowing a working local model."
+              ? `  ${alt} answered, and consolidation falls back to it, but each run\n` +
+                "  tries the broken default first. Fix the default's quota or login\n" +
+                "  -- or unset LETHE_API_KEY if the broken path is the API one."
               : "  Nothing else on this machine can distil either. Fix the model's\n" +
                 "  quota or login, set LETHE_API_KEY, or install ollama."),
           );
@@ -1001,6 +1001,8 @@ whether this is what moved adoption.`);
         deep: rest.includes("--deep"),
       }), resolved ? { deadline: 90 } : {});
       console.log(formatReport(r));
+      const note = resolved ? fallbackNote(resolved) : null;
+      if (note) console.log(`\n  ${note}`);
       if (rest.includes("--dry-run")) console.log("\n  (dry run -- nothing was written)");
       return;
     }

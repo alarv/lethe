@@ -11,6 +11,17 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-16
+
+### Fixed
+
+- **A fallback distiller was reported as the broken one.** `lethe compact` printed
+  `distilling via opencode` and "consolidated with the host's model" even when opencode had
+  failed on quota and `claude` did the work, and the server logged `compact done via=opencode`.
+  The report now says which distiller answered and why the first did not, and the log's
+  `via` names the one that answered. `doctor`'s hint no longer claims consolidation only uses
+  the broken default.
+
 ## [0.2.3] - 2026-10-16
 
 ### Fixed
@@ -601,7 +612,8 @@ proven** — see [`docs/evals.md`](docs/evals.md).
   The one place they would earn their cost is grouping episodes; see
   [`docs/architecture.md`](docs/architecture.md).
 
-[Unreleased]: https://github.com/alarv/lethe/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/alarv/lethe/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/alarv/lethe/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/alarv/lethe/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/alarv/lethe/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/alarv/lethe/compare/v0.2.0...v0.2.1

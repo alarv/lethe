@@ -260,7 +260,7 @@ export function formatReport(r: CompactReport): string {
   const lines = [
     r.skippedNoModel
       ? "no model available -- consolidation skipped, episodes kept intact"
-      : "consolidated with the host's model",
+      : "consolidated",
     "",
     ...r.changes.map((c) => `  ${c}`),
     "",

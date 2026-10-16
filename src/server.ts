@@ -207,7 +207,7 @@ export function createServer(cwd = process.cwd()): McpServer {
         });
         const r = await compact(store, { distil: resolved.distil });
         log("compact", "done", {
-          via: resolved.via,
+          via: resolved.last?.answeredBy ?? resolved.via,
           claims: r.claimsWritten,
           consumed: r.episodesConsumed,
           promoted: r.promoted,
