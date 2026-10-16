@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { failureDetail, listDistillers, probeDistiller, resolveDistiller } from "./distil.js";
+import { chain, failureDetail, listDistillers, probeDistiller, resolveDistiller } from "./distil.js";
 
 const saved = { ...process.env };
 
@@ -76,4 +76,23 @@ test("nothing anywhere gives an empty detail", () => {
 test("the reason beats the banner opencode prints first", () => {
   const stderr = "> build · gpt-5.3-codex\n\nError: Payment Required: {\"error\":{\"message\":\"You have exceeded your monthly quota\"}}\n";
   assert.match(failureDetail(stderr, ""), /^Error: Payment Required.*monthly quota/);
+});
+
+test("a distiller that throws hands the prompt to the next one", async () => {
+  const seen: string[] = [];
+  const r = chain([
+    { via: "a", distil: async () => { throw new Error("quota"); } },
+    { via: "b", distil: async (p) => { seen.push(p); return "claim"; } },
+  ]);
+  assert.equal(r?.via, "a");
+  assert.equal(await r!.distil("x"), "claim");
+  assert.deepEqual(seen, ["x"]);
+});
+
+test("when every distiller fails the first error is the one reported", async () => {
+  const r = chain([
+    { via: "a", distil: async () => { throw new Error("quota"); } },
+    { via: "b", distil: async () => { throw new Error("login"); } },
+  ]);
+  await assert.rejects(() => r!.distil("x"), /quota/);
 });

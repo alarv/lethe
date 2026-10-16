@@ -39,6 +39,10 @@ The release workflow refuses to publish a version with no section here.
   `doctor` now asks the resolved distiller to distil four words and FAILs with its reason
   when it cannot; when a later candidate in the chain answers, it names the working one
   and says the broken default shadows it.
+- **A broken default distiller stalled compaction while a working one sat unused.** opencode
+  on an exhausted Copilot quota resolved first, failed every call, and `claude` behind it was
+  never tried or even listed. Both CLIs are now candidates, and a candidate that fails or
+  returns nothing hands the prompt to the next; the error reported is the first one's.
 - **The prompt hook recalled on text no person typed.** Subagent hand-backs and task
   notifications arrive in the user's turn. In a week of real use they were 38 of 58 hook
   recalls, pushing memories into context for no question and counting as adoption. They

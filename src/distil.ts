@@ -157,27 +157,28 @@ function capture(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<s
  * `--pure` keeps plugins out of the child, which matters because the child would
  * otherwise load this very server.
  */
-async function fromCli(): Promise<Resolved | null> {
+async function fromClis(): Promise<Resolved[]> {
   const env = { ...process.env, [GUARD]: "1" };
 
   // No model is named unless LETHE_MODEL says so: a hardcoded one ages out, or is
   // not on the user's plan, and the CLI already knows what its user has access to.
   const model = process.env.LETHE_MODEL;
 
+  const out: Resolved[] = [];
   if (await onPath("opencode")) {
-    return {
+    out.push({
       via: `opencode ${model ?? "(default model)"}`,
       distil: (prompt) => capture("opencode", ["run", "--pure", ...(model ? ["-m", model] : []), prompt], env),
-    };
+    });
   }
 
   if (await onPath("claude")) {
-    return {
+    out.push({
       via: `claude ${model ?? "(default model)"}`,
       distil: (prompt) => capture("claude", ["-p", ...(model ? ["--model", model] : []), prompt], env),
-    };
+    });
   }
-  return null;
+  return out;
 }
 
 /**
@@ -207,8 +208,7 @@ export async function listDistillers(
   const ollama = await fromOllama();
   if (ollama) out.push(ollama);
 
-  const cli = await fromCli();
-  if (cli) out.push(cli);
+  out.push(...(await fromClis()));
 
   return out;
 }
@@ -219,7 +219,37 @@ export async function listDistillers(
 export async function resolveDistiller(
   sampling?: Distiller | undefined,
 ): Promise<Resolved | null> {
-  return (await listDistillers(sampling))[0] ?? null;
+  const all = await listDistillers(sampling);
+  return chain(all);
+}
+
+/**
+ * The first candidate, with the rest behind it.
+ *
+ * Found is not working: an opencode account over its monthly quota resolved
+ * fine and failed every compaction for ten days while a working `claude` sat
+ * unused behind it. A candidate that throws now hands the prompt to the next;
+ * the error surfaced is the first one, since that is the preferred distiller
+ * and the one to fix.
+ */
+export function chain(all: Resolved[]): Resolved | null {
+  if (all.length <= 1) return all[0] ?? null;
+  return {
+    via: all[0]!.via,
+    distil: async (prompt) => {
+      let first: unknown;
+      for (const [i, r] of all.entries()) {
+        try {
+          const out = await r.distil(prompt);
+          if (out.trim() || i === all.length - 1) return out;
+        } catch (e) {
+          first ??= e;
+          if (i === all.length - 1) throw first;
+        }
+      }
+      throw first ?? new Error("empty reply");
+    },
+  };
 }
 
 export async function describeDistiller(): Promise<string> {
