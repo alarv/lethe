@@ -1009,44 +1009,53 @@ export class Store {
     const index = MemoryIndex.open(join(letheHome(), "index.db"));
     if (!index) return this.searchNaive(query, limit, paths);
     try {
-      index.sync(this.indexFiles(), (f) => this.load(f.path, f.project));
-      // Over-fetch: hits that resolve forward collapse onto shared claims, so
-      // asking for exactly `limit` rows can yield fewer than `limit` results.
-      const hits = index.search(query, limit * 4);
-      if (!hits.length) return [];
-
-      // Load the hits, and then the successors of any that were superseded --
-      // a successor is rarely a hit itself, and dropping it would throw away
-      // the consolidation the user already paid for. Both sets are bounded by
-      // the number of hits, which is why recall no longer scales with the store.
-      const byId = new Map<string, Memory>();
-      for (const h of hits) {
-        const m = this.load(h.path, h.project);
-        if (m) byId.set(m.id, m);
-      }
-      // Chains, not single hops: an episode is superseded by a claim, and that
-      // claim can later be superseded by a revision of it. Loading only the
-      // immediate successor would leave the ranker looking at a cold claim and
-      // dropping the episode's route to the live one. Bounded because a cycle in
-      // the data must not become an infinite loop here.
-      for (let hop = 0; hop < 8; hop++) {
-        const wanted = [...new Set(
-          [...hits.map((h) => h.supersededBy), ...[...byId.values()].map((m) => m.supersededBy)]
-            .filter((id): id is string => !!id && !byId.has(id)),
-        )];
-        if (!wanted.length) break;
-        for (const row of index.locate(wanted)) {
-          const m = this.load(row.path, row.project);
-          if (m) byId.set(m.id, m);
-        }
-      }
-      return rank(hits, byId, paths, limit);
+      return this.hitsFromIndex(index, query, limit, paths);
     } catch (e) {
       log("index", `search failed, falling back to the scorer: ${(e as Error).message}`);
       return this.searchNaive(query, limit, paths);
     } finally {
       index.close();
     }
+  }
+
+  private hitsFromIndex(
+    index: MemoryIndex,
+    query: string,
+    limit: number,
+    paths: string[],
+  ): Memory[] {
+    index.sync(this.indexFiles(), (f) => this.load(f.path, f.project));
+    // Over-fetch: hits that resolve forward collapse onto shared claims, so
+    // asking for exactly `limit` rows can yield fewer than `limit` results.
+    const hits = index.search(query, limit * 4);
+    if (!hits.length) return [];
+
+    // Load the hits, and then the successors of any that were superseded --
+    // a successor is rarely a hit itself, and dropping it would throw away
+    // the consolidation the user already paid for. Both sets are bounded by
+    // the number of hits, which is why recall no longer scales with the store.
+    const byId = new Map<string, Memory>();
+    for (const h of hits) {
+      const m = this.load(h.path, h.project);
+      if (m) byId.set(m.id, m);
+    }
+    // Chains, not single hops: an episode is superseded by a claim, and that
+    // claim can later be superseded by a revision of it. Loading only the
+    // immediate successor would leave the ranker looking at a cold claim and
+    // dropping the episode's route to the live one. Bounded because a cycle in
+    // the data must not become an infinite loop here.
+    for (let hop = 0; hop < 8; hop++) {
+      const wanted = [...new Set(
+        [...hits.map((h) => h.supersededBy), ...[...byId.values()].map((m) => m.supersededBy)]
+          .filter((id): id is string => !!id && !byId.has(id)),
+      )];
+      if (!wanted.length) break;
+      for (const row of index.locate(wanted)) {
+        const m = this.load(row.path, row.project);
+        if (m) byId.set(m.id, m);
+      }
+    }
+    return rank(hits, byId, paths, limit);
   }
 
   /**
@@ -1068,7 +1077,32 @@ export class Store {
   recall(query: string, limit = 8, paths: string[] = []): Memory[] {
     const queryTerms = contentTerms(query);
     if (!queryTerms.length) return []; // nothing but common words
-    const candidates = this.search(query, limit * 3, paths);
+    const index = MemoryIndex.open(join(letheHome(), "index.db"));
+    if (!index) {
+      const candidates = this.searchNaive(query, limit * 3, paths);
+      return this.admitted(candidates, queryTerms, limit, this.frequencies(queryTerms));
+    }
+    try {
+      // One connection for both the search and the document frequencies it
+      // needs. Opening the index twice per recall was doing the sync and the
+      // connection setup twice for one answer.
+      const candidates = this.hitsFromIndex(index, query, limit * 3, paths);
+      return this.admitted(candidates, queryTerms, limit, this.frequencies(queryTerms, index));
+    } catch (e) {
+      log("index", `recall failed, falling back to the scorer: ${(e as Error).message}`);
+      const candidates = this.searchNaive(query, limit * 3, paths);
+      return this.admitted(candidates, queryTerms, limit, this.frequencies(queryTerms));
+    } finally {
+      index.close();
+    }
+  }
+
+  private admitted(
+    candidates: Memory[],
+    queryTerms: string[],
+    limit: number,
+    frequencies: Frequencies,
+  ): Memory[] {
     if (!candidates.length) return [];
     // The best match always survives; only the rest must earn a place. Applying
     // the floor to the top hit as well was measured and rejected: it dropped the
@@ -1077,18 +1111,15 @@ export class Store {
     // question, and no lexical rule can tell them apart. What the floor CAN do
     // without that cost is stop the tail from being padded.
     const [top, ...rest] = candidates;
-    return [top!, ...admit(rest, queryTerms, this.frequencies(queryTerms))].slice(0, limit);
+    return [top!, ...admit(rest, queryTerms, frequencies)].slice(0, limit);
   }
 
-  private frequencies(queryTerms: string[]): Frequencies {
-    const index = MemoryIndex.open(join(letheHome(), "index.db"));
+  private frequencies(queryTerms: string[], index?: MemoryIndex): Frequencies {
     if (index) {
       try {
         return index.frequencies(queryTerms);
       } catch (e) {
         log("index", `frequencies failed, counting from the store: ${(e as Error).message}`);
-      } finally {
-        index.close();
       }
     }
     const corpus = this.all();

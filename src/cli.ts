@@ -561,18 +561,24 @@ whether this is what moved adoption.`);
       // file, and polling behaves the same on every platform.
       let offset = existsSync(LOG_PATH) ? statSync(LOG_PATH).size : 0;
       watchFile(LOG_PATH, { interval: 500 }, (cur) => {
-        if (cur.size < offset) offset = 0; // rotated: the new file starts over
-        if (cur.size === offset) return;
-        const fd = openSync(LOG_PATH, "r");
         try {
-          const buf = Buffer.alloc(cur.size - offset);
-          readSync(fd, buf, 0, buf.length, offset);
-          process.stdout.write(buf.toString("utf8").split(/(?<=\n)/).map((l) =>
-            l.endsWith("\n") ? logLine(l.slice(0, -1)) + "\n" : logLine(l)).join(""));
-        } finally {
-          closeSync(fd);
+          if (cur.size < offset) offset = 0; // rotated: the new file starts over
+          if (cur.size === offset) return;
+          const fd = openSync(LOG_PATH, "r");
+          try {
+            const buf = Buffer.alloc(cur.size - offset);
+            readSync(fd, buf, 0, buf.length, offset);
+            process.stdout.write(buf.toString("utf8").split(/(?<=\n)/).map((l) =>
+              l.endsWith("\n") ? logLine(l.slice(0, -1)) + "\n" : logLine(l)).join(""));
+          } finally {
+            closeSync(fd);
+          }
+          offset = cur.size;
+        } catch {
+          // Rotation removes or renames the path between the stat and the read.
+          // Following is a debugging aid; it must not be the thing that crashes.
+          offset = 0;
         }
-        offset = cur.size;
       });
       return;
     }

@@ -56,20 +56,103 @@ function tokenSet(text: string): Set<string> {
 }
 
 /**
- * Suffix stripping, so "test" and "tests" collide. Not a real stemmer.
+ * Porter stemming, so admission agrees with the FTS5 porter tokenizer.
  *
- * Strips known suffixes rather than truncating to a prefix. A prefix cut turned
- * "thanks" into "than", which matches inside "than", "thanking", and any word
- * that happens to start that way -- enough to make "thanks that worked" look
- * like a relevant question.
+ * The index matches with porter and admission used to strip suffixes by hand,
+ * which meant `running`/`run` collided in one and not the other. A candidate
+ * FTS5 ranked as a match was then rejected by the gate, or a term counted as
+ * common was not the term the candidate contained. The two halves of one
+ * retrieval decision now use the same algorithm.
  *
- * Shared with compact.ts, which needs the same collisions when clustering.
+ * The implementation is the original Porter algorithm, kept here rather than
+ * pulled in as a dependency for one pure function. query.test.ts checks it
+ * against real FTS5 vocabulary, so a future edit cannot drift silently.
+ */
+const PORTER_STEP2: Record<string, string> = {
+  ational: "ate", tional: "tion", enci: "ence", anci: "ance", izer: "ize",
+  bli: "ble", alli: "al", entli: "ent", eli: "e", ousli: "ous",
+  ization: "ize", ation: "ate", ator: "ate", alism: "al", iveness: "ive",
+  fulness: "ful", ousness: "ous", aliti: "al", iviti: "ive", biliti: "ble",
+  logi: "log",
+};
+const PORTER_STEP3: Record<string, string> = {
+  icate: "ic", ative: "", alize: "al", iciti: "ic", ical: "ic", ful: "", ness: "",
+};
+const PORTER_C = "[^aeiou]";
+const PORTER_V = "[aeiouy]";
+const PORTER_CONS = `${PORTER_C}[^aeiouy]*`;
+const PORTER_VOWEL = `${PORTER_V}[aeiou]*`;
+const PORTER_M0 = `^(${PORTER_CONS})?${PORTER_VOWEL}${PORTER_CONS}`;
+const PORTER_M1 = `^(${PORTER_CONS})?${PORTER_VOWEL}${PORTER_CONS}${PORTER_VOWEL}${PORTER_CONS}`;
+const PORTER_MEQ1 = `^(${PORTER_CONS})?${PORTER_VOWEL}${PORTER_CONS}(${PORTER_VOWEL})?$`;
+const PORTER_VOWEL_IN_STEM = `^(${PORTER_CONS})?${PORTER_V}`;
+
+/**
+ * `test` must not match `latest`, and `running` must collide with `run` the
+ * same way the index's porter tokenizer does.
  */
 export function stem(t: string): string {
-  for (const suffix of ["ing", "ed", "es", "s"]) {
-    if (t.length > suffix.length + 2 && t.endsWith(suffix)) return t.slice(0, -suffix.length);
+  if (t.length < 3 || !/^[a-z]+$/.test(t)) return t;
+  let w = t;
+  const first = w[0]!;
+  if (first === "y") w = `Y${w.slice(1)}`;
+
+  // Step 1a
+  if (/^(.+?)(ss|i)es$/.test(w)) w = w.replace(/^(.+?)(ss|i)es$/, "$1$2");
+  else w = w.replace(/^(.+?)([^s])s$/, "$1$2");
+
+  // Step 1b
+  let m = /^(.+?)eed$/.exec(w);
+  if (m) {
+    if (new RegExp(PORTER_M0).test(m[1]!)) w = w.slice(0, -1);
+  } else {
+    m = /^(.+?)(ed|ing)$/.exec(w);
+    if (m) {
+      const base = m[1]!;
+      if (new RegExp(PORTER_VOWEL_IN_STEM).test(base)) {
+        w = base;
+        if (/(at|bl|iz)$/.test(w)) w += "e";
+        else if (/([^aeiouylsz])\1$/.test(w)) w = w.slice(0, -1);
+        else if (new RegExp(`^${PORTER_CONS}${PORTER_V}[^aeiouwxy]$`).test(w)) w += "e";
+      }
+    }
   }
-  return t;
+
+  // Step 1c
+  m = /^(.+?)y$/.exec(w);
+  if (m && new RegExp(PORTER_VOWEL_IN_STEM).test(m[1]!)) w = `${m[1]}i`;
+
+  // Step 2
+  m = /^(.+?)(ational|tional|enci|anci|izer|bli|alli|entli|eli|ousli|ization|ation|ator|alism|iveness|fulness|ousness|aliti|iviti|biliti|logi)$/.exec(w);
+  if (m && new RegExp(PORTER_M0).test(m[1]!)) w = m[1]! + PORTER_STEP2[m[2]!]!;
+
+  // Step 3
+  m = /^(.+?)(icate|ative|alize|iciti|ical|ful|ness)$/.exec(w);
+  if (m && new RegExp(PORTER_M0).test(m[1]!)) w = m[1]! + PORTER_STEP3[m[2]!]!;
+
+  // Step 4
+  m = /^(.+?)(al|ance|ence|er|ic|able|ible|ant|ement|ment|ent|ou|ism|ate|iti|ous|ive|ize)$/.exec(w);
+  if (m) {
+    if (new RegExp(PORTER_M1).test(m[1]!)) w = m[1]!;
+  } else {
+    m = /^(.+?)(s|t)(ion)$/.exec(w);
+    if (m && new RegExp(PORTER_M1).test(m[1]! + m[2]!)) w = m[1]! + m[2]!;
+  }
+
+  // Step 5
+  m = /^(.+?)e$/.exec(w);
+  if (m) {
+    const base = m[1]!;
+    if (
+      new RegExp(PORTER_M1).test(base) ||
+      (new RegExp(PORTER_MEQ1).test(base) &&
+        !new RegExp(`^${PORTER_CONS}${PORTER_V}[^aeiouwxy]$`).test(base))
+    ) w = base;
+  }
+  if (/ll$/.test(w) && new RegExp(PORTER_M1).test(w)) w = w.slice(0, -1);
+
+  if (first === "y") w = `y${w.slice(1)}`;
+  return w;
 }
 
 /**

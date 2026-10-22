@@ -333,8 +333,8 @@ export class MemoryIndex {
    * index so recall never has to read the store to find out.
    *
    * Keyed by query.ts's stem() because that is what admission compares against.
-   * The index matches with its own porter stemmer, so the two can disagree at
-   * the edges; the count is a threshold input, and close is enough.
+   * Both use the Porter algorithm now, so the count and the per-hit coverage
+   * agree on what a term is rather than nearly agreeing.
    */
   frequencies(words: string[]): Frequencies {
     const total = Number(

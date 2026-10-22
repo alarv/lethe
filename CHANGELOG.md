@@ -9,7 +9,25 @@ still move.
 
 The release workflow refuses to publish a version with no section here.
 
-## [Unreleased]
+## [0.3.2] - 2026-10-22
+
+### Fixed
+
+- **Admission and the index now stem the same way.** Admission stripped `ing`/`ed`/`es`/`s`
+  by hand while FTS5 used porter, so a candidate ranked as a match could be rejected by
+  the gate because `running` became `runn` on one side and `run` on the other. `stem()` is
+  the Porter algorithm now, and a test checks it against real FTS5 vocabulary so the two
+  cannot drift again.
+- **Recall opens the index once.** Search and the document frequencies admission needs
+  each opened, synced and closed the database, twice per recall. They share one connection
+  now; the second open bought nothing.
+- **`lethe log -f` no longer dies on rotation.** A rotation that removed or renamed the
+  file between the stat and the read threw from the follow callback. The follower treats
+  that as a reset and keeps watching.
+- **The eval no longer calls a retrieval-only result "the thesis failing".** It prints a
+  retrieval comparison and says plainly that this is the layer under the turns/tokens
+  claim, not that claim. `docs/evals.md` carries the 24-task re-run, including the
+  `recall` path that ships.
 
 ## [0.3.1] - 2026-10-16
 

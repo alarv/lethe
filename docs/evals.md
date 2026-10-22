@@ -133,12 +133,12 @@ agents, so it does not yet measure the primary metrics above (turns to correct, 
 tokens). It measures the layer underneath them: if retrieval over distilled claims cannot
 beat retrieval over the episodes they came from, nothing downstream can.
 
-The 18 tasks are synthetic, which is the largest caveat on everything below. Real
-dogfooded pairs remain the goal.
+The 24 tasks (18 answerable, 6 no-answer) are synthetic, which is the largest caveat on
+everything below. Real dogfooded pairs remain the goal.
 
 ## Results
 
-Run under both retrieval mechanisms, because three changes to retrieval landed in
+Run under each retrieval mechanism, because three changes to retrieval landed in
 sequence and a single table cannot say which one moved the numbers.
 
 | mechanism | raw MRR | compact MRR | compact hit@1 | cost-to-answer delta |
@@ -200,3 +200,23 @@ hit it returned, and strength multiplies rank, so a memory ranked because it had
 before. Recall now reinforces weakly and ranking counts strength only up to 1; together
 the memory that was in 8 of 8 real recalls is in 3 of 8. The eval cannot see that change —
 its fixtures all have default strength — which is a gap worth closing.
+
+### 2026-10-22 re-run (24 tasks)
+
+The rows above are the 18-task snapshot, kept for history. The full set is 18 answerable
+tasks plus 6 no-answer ones, and the harness now reports all three mechanisms:
+
+| mechanism | raw MRR | compact MRR | compact hit@1 | precision | off-topic | cost-to-answer |
+|---|---|---|---|---|---|---|
+| `naive` | 0.84 | 0.84 | 72% | 28% | 100% | +154 chars |
+| `fts5` | 0.88 | 0.91 | 83% | 29% | 100% | +111 chars |
+| `recall` | 0.88 | 0.86 | 83% | 67% | 100% | +81 chars |
+
+`recall` loses 0.02 MRR to raw overall and on the `hard` subset (0.79 vs 0.81), while
+costing 81 more characters to reach the answer. The floor buys precision (29% -> 67%) at
+that cost. FTS5 alone still beats raw, but FTS5 is not what the tool returns.
+
+Each cell is five repeats, but this is still a retrieval measurement, not the
+turns/tokens claim at the top of this document. At 24 tasks a 0.02 MRR difference is
+noise; the honest reading is that recall and raw are close, with recall trading rank for
+precision.

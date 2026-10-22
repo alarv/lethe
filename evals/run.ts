@@ -221,10 +221,10 @@ function table(results: Result[], title: string): void {
   }
 }
 
-function verdict(overall: Result[], mechanism: Mechanism): void {
+function comparison(overall: Result[], mechanism: Mechanism): void {
   const raw = overall.find((r) => r.condition === "raw")!;
   const compact = overall.find((r) => r.condition === "compact")!;
-  console.log(`\nverdict — ${mechanism}`);
+  console.log(`\nretrieval comparison — ${mechanism}`);
   const delta = compact.mrr - raw.mrr;
   const cheaper = raw.costToAnswer - compact.costToAnswer;
   console.log(
@@ -237,10 +237,13 @@ function verdict(overall: Result[], mechanism: Mechanism): void {
   const shrink = 1 - compact.indexChars / raw.indexChars;
   console.log(`  index ${(shrink * 100).toFixed(0)}% smaller (${raw.indexChars} -> ${compact.indexChars} chars)`);
   console.log(`  noise ${pct(compact.precision).trim()} of compact results relevant, ${pct(compact.offTopic).trim()} of no-answer queries got an answer anyway`);
+  console.log("\n  retrieval only: this measures the layer under the turns/tokens claim in");
+  console.log("  docs/evals.md, not that claim itself. At this task count a small MRR");
+  console.log("  difference is noise, not a verdict.");
   if (delta < 0 && cheaper <= 0) {
-    console.log("\n  Compaction loses on both axes. That is the thesis failing, not a tuning problem.");
+    console.log("\n  Compact retrieves worse and costs more to reach an answer.");
   } else if (delta < 0) {
-    console.log("\n  Compaction retrieves worse but costs less. Whether that trade is worth it is a judgement, not a number.");
+    console.log("\n  Compact retrieves worse but costs less. Whether that trade is worth it is a judgement, not a number.");
   }
 }
 
@@ -267,7 +270,7 @@ async function main(): Promise<void> {
           (d === "hard" ? " — queries that share little wording with what was recorded" : ""),
       );
     }
-    verdict(overall, mechanism);
+    comparison(overall, mechanism);
   }
 }
 

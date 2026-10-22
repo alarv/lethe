@@ -104,7 +104,7 @@ test("document frequency counts memories containing each term", () => {
   ];
   const df = documentFrequency(corpus, ["docker", "embeddings"]);
   assert.equal(df.get("docker"), 3);
-  assert.equal(df.get("embedding"), 1, "terms are stemmed before counting");
+  assert.equal(df.get("embed"), 1, "terms are stemmed before counting");
 });
 
 // The case this exists for: two content terms, only one of which matches, but
