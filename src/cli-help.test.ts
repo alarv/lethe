@@ -39,3 +39,18 @@ test("lethe --help and -h print the whole usage", () => {
     assert.match(out, /lethe recall/);
   }
 });
+
+test("lethe --version prints the version and touches nothing", () => {
+  const home = mkdtempSync(join(tmpdir(), "lethe-version-home-"));
+  try {
+    for (const flag of ["--version", "-v"]) {
+      const out = execFileSync(process.execPath, [cli, flag], {
+        env: { ...process.env, LETHE_HOME: home, NO_COLOR: "1" }, encoding: "utf8",
+      });
+      assert.match(out.trim(), /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/);
+    }
+    assert.deepEqual(readdirSync(home), [], "nothing written to the lethe home");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

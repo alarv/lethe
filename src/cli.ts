@@ -14,7 +14,7 @@ function pressureThreshold(): number {
   const n = Number(process.env.LETHE_PRESSURE);
   return Number.isFinite(n) && n > 0 ? n : 6;
 }
-import { promptHook, readHookPolicy } from "./hook.js";
+import { hookCommand, promptHook, readHookPolicy } from "./hook.js";
 import { PLACEMENTS, choose } from "./prompt.js";
 import { claimSharing, globalConfigPath, ignoreInGit, shareDefault, staleConfig, staleRootIgnore, writeConfig } from "./config.js";
 import { serve, sessionInstructions } from "./server.js";
@@ -28,7 +28,8 @@ import { seeded } from "./learn.js";
 import { type Candidate, harvest } from "./harvest.js";
 import { spinning } from "./progress.js";
 import { badge, c, logLine } from "./color.js";
-import { DEFAULT_ENDPOINT, consent, due, endpoint, flush } from "./telemetry.js";
+import { DEFAULT_ENDPOINT, consent, due, endpoint, flush, version } from "./telemetry.js";
+import { UPDATE_ADVICE, newer, refreshUpdate, updateNotice } from "./update.js";
 
 const TELEMETRY_CHOICES = [
   { label: "keep it on", detail: "send anonymous daily counts -- numbers only, `lethe telemetry` shows them" },
@@ -54,6 +55,7 @@ async function offerTelemetryOptOut(): Promise<void> {
 const USAGE = `lethe -- a memory harness for coding agents that forgets on purpose
 
   lethe mcp                    run the MCP server over stdio (what harnesses call)
+  lethe --version              print the installed version
   lethe ls                     list stored memories
   lethe recall <query>         search memory
   lethe note <title> [body]    record a memory by hand
@@ -158,6 +160,10 @@ async function main(): Promise<void> {
     console.log(usageFor(cmd));
     return;
   }
+  if (cmd === "--version" || cmd === "-v") {
+    console.log(version());
+    return;
+  }
   const store = new Store();
 
   switch (cmd) {
@@ -207,6 +213,7 @@ async function main(): Promise<void> {
         // being asked is not a thing a memory tool should do on its own.
         const bin = process.argv[1] ?? "lethe";
         const policy = readHookPolicy();
+        const command = hookCommand(bin);
         if (policy.blocked) {
           console.log(`Claude Code will not run this hook here: ${policy.reason}.
 Under that setting only hooks an administrator deploys are run, and any you add
@@ -221,7 +228,7 @@ organisation to deploy the command below as a managed hook.
       "UserPromptSubmit": [
         {
           "hooks": [
-            { "type": "command", "command": ${JSON.stringify(`node --disable-warning=ExperimentalWarning ${bin} hook prompt`)} }
+            { "type": "command", "command": ${JSON.stringify(command)} }
           ]
         }
       ]
@@ -410,6 +417,20 @@ whether this is what moved adoption.`);
         console.log(`${ok(true)} telemetry  ${t.state === "off" ? "off" : "on"} (${t.why})` +
           (t.state !== "off" && !endpoint() ? "; no endpoint in this build, so nothing is sent" : ""));
       }
+      {
+        // A version the harness keeps spawning is easy to miss: status shows
+        // what ran, not what npm has. Asked at most once a day and cached.
+        const check = await refreshUpdate();
+        const current = version();
+        if (check?.latest && newer(check.latest, current)) {
+          console.log(`${badge("warn")} update     ${current} -> ${check.latest}`);
+          problems.push(`A newer lethe is published (${check.latest}). ${UPDATE_ADVICE}`);
+        } else if (check?.latest) {
+          console.log(`${ok(true)} update     current (${current})`);
+        } else {
+          console.log(`${c.dim("     update     unknown (npm registry unreachable)")}`);
+        }
+      }
       if (!d) {
         problems.push(
           "No model available, so consolidation cannot run and episodes will\n" +
@@ -520,6 +541,11 @@ whether this is what moved adoption.`);
         if (dh.failures >= 2) {
           console.log(`${" ".repeat(10)} ${c.yellow(`failing since ${dh.failingSince!.slice(0, 10)} (${dh.failures}x): ${dh.reason}`)}`);
         }
+      }
+      {
+        // Cache only: status stays offline, and the server refreshes the answer.
+        const update = updateNotice();
+        if (update) console.log(`${key("update")} ${c.yellow(update)} ${c.dim(UPDATE_ADVICE)}`);
       }
       console.log("");
       if (!lines.length) {

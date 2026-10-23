@@ -44,7 +44,7 @@ Works in any host that speaks MCP.
 **Claude Code**
 
 ```sh
-claude mcp add lethe --scope user -- npx -y @alarv/lethe mcp
+claude mcp add lethe --scope user -- npx -y @alarv/lethe@latest mcp
 ```
 
 **opencode** — `~/.config/opencode/opencode.json` for every project, or `opencode.json`
@@ -55,7 +55,7 @@ in a repo for just that one:
   "mcp": {
     "lethe": {
       "type": "local",
-      "command": ["npx", "-y", "@alarv/lethe", "mcp"],
+      "command": ["npx", "-y", "@alarv/lethe@latest", "mcp"],
       "enabled": true
     }
   }
@@ -67,7 +67,7 @@ in a repo for just that one:
 ```json
 {
   "mcpServers": {
-    "lethe": { "command": "npx", "args": ["-y", "@alarv/lethe", "mcp"] }
+    "lethe": { "command": "npx", "args": ["-y", "@alarv/lethe@latest", "mcp"] }
   }
 }
 ```
@@ -77,14 +77,18 @@ in a repo for just that one:
 ```toml
 [mcp_servers.lethe]
 command = "npx"
-args = ["-y", "@alarv/lethe", "mcp"]
+args = ["-y", "@alarv/lethe@latest", "mcp"]
 ```
 
 Then confirm it:
 
 ```sh
-npx @alarv/lethe doctor
+npx @alarv/lethe@latest doctor
 ```
+
+The `@latest` tag means every new session runs the latest published version. A global
+install is the exception — update it with `npm i -g @alarv/lethe@latest`; `doctor` says
+when the published version is newer.
 
 Needs Node 22+. On older versions retrieval falls back to a simpler ranker rather than
 failing.
@@ -254,7 +258,8 @@ including how releases work.
 ## Telemetry
 
 On unless you say otherwise. `lethe init` says so once, in a terminal; if you opt
-out, nothing is sent. What leaves the machine is one summary per completed day:
+out, nothing is sent. What leaves the machine is one summary per completed day and
+version:
 counts of sessions, recalls, notes, confirmations and consolidations, the lethe version,
 and which kind of host connected, from a fixed list. It never sends a query, a memory, a
 path, a repository, a user or machine name, or any id that outlives one server process.

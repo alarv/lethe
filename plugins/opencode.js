@@ -17,16 +17,40 @@
  * took three attempts to get right and is the difference between useful context
  * and noise on every turn.
  *
+ * The CLI is found, not baked in. It used to default to the author's checkout
+ * path, which existed on one machine: everywhere else spawn failed silently and
+ * the plugin did nothing. `LETHE_CLI` still wins for a dev checkout; otherwise
+ * npx runs @latest, so a new opencode session picks up a release. npx costs
+ * about a second, which is why the timeout is not the 3s of a local binary.
+ *
  * Install: copy to ~/.config/opencode/plugins/lethe.js
  */
 
 import { spawn } from "node:child_process";
+import { dirname, join } from "node:path";
 
 /** Absolute, because a plugin's PATH is not a shell's and nvm lives off it. */
 const NODE = process.env.LETHE_NODE ?? process.execPath;
-const CLI = process.env.LETHE_CLI ?? "/Users/a.arvanitidis/Projects/lethe/dist/cli.js";
+const NPX = process.env.LETHE_NPX ??
+  join(dirname(process.execPath), process.platform === "win32" ? "npx.cmd" : "npx");
 /** Short: this sits between the user pressing enter and the model starting. */
-const TIMEOUT_MS = 3000;
+const TIMEOUT_MS = 5000;
+
+function command() {
+  if (process.env.LETHE_CLI) {
+    return {
+      cmd: NODE,
+      args: ["--disable-warning=ExperimentalWarning", process.env.LETHE_CLI, "hook", "prompt"],
+      shell: false,
+    };
+  }
+  return {
+    cmd: NPX,
+    args: ["-y", "@alarv/lethe@latest", "hook", "prompt"],
+    // A .cmd needs a shell on Windows; the local-node form does not.
+    shell: process.platform === "win32",
+  };
+}
 
 function recall(prompt, directory) {
   return new Promise((resolve) => {
@@ -40,8 +64,10 @@ function recall(prompt, directory) {
 
     let child;
     try {
-      child = spawn(NODE, ["--disable-warning=ExperimentalWarning", CLI, "hook", "prompt"], {
+      const { cmd, args, shell } = command();
+      child = spawn(cmd, args, {
         stdio: ["pipe", "pipe", "ignore"],
+        shell,
       });
     } catch {
       return done(""); // lethe not installed here; that is not an error

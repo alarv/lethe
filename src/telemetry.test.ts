@@ -109,6 +109,46 @@ test("summaries count sessions by pid and never contain one", () => {
   for (const pid of ["100", "200", "300", "400", "999"]) assert.ok(!text.includes(pid), `pid ${pid} leaked`);
 });
 
+test("a day holds one summary per version, so an upgrade cannot re-stamp it", () => {
+  const summaries = summarise([
+    `${yesterday} 100 v0.3.1 session`,
+    `${yesterday} 100 v0.3.1 recall`,
+    `${yesterday} 200 v0.3.2 session`,
+    `${yesterday} 200 v0.3.2 note`,
+  ], "9.9.9");
+  assert.equal(summaries.length, 2);
+  const old = summaries[0]!;
+  const current = summaries[1]!;
+  assert.equal(old.v, "0.3.1");
+  assert.equal(old.sessions, 1);
+  assert.equal(old.recalls, 1);
+  assert.equal(old.notes, 0);
+  assert.equal(current.v, "0.3.2");
+  assert.equal(current.sessions, 1);
+  assert.equal(current.recalls, 0);
+  assert.equal(current.notes, 1);
+});
+
+test("counter lines carry the version that wrote them", () => {
+  optIn(true);
+  record("note", "t");
+  assert.ok(pending()[0]!.includes(` v${version()} note`), "the writer's version is in the line");
+});
+
+test("flush resends only the version the collector refused", async () => {
+  optIn(true);
+  const dir = join(home, "telemetry");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "pending.log"),
+    [`${yesterday} 1 v0.2.1 session`, `${yesterday} 2 v0.3.2 session`].join("\n") + "\n");
+
+  const r = await flush(async (_url, body) => !body.includes("0.2.1"));
+  assert.equal(r.sent, 1);
+  const left = pending();
+  assert.equal(left.length, 1, "the accepted version is not sent again");
+  assert.ok(left[0]!.includes("v0.2.1"));
+});
+
 test("only completed days are due", () => {
   assert.deepEqual(due([`${today} 1 session`]), []);
   assert.equal(due([`${yesterday} 1 session`]).length, 1);

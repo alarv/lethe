@@ -9,6 +9,36 @@ still move.
 
 The release workflow refuses to publish a version with no section here.
 
+## [0.3.3] - 2026-10-23
+
+### Fixed
+
+- **Telemetry no longer re-stamps an old day with the version that sent it.** Counter
+  lines carry the version that wrote them, and summaries are grouped by day *and*
+  version. Upgrading before the next flush used to attribute a day's use to a release
+  that had not run yet, which made the by-version adoption split untrustworthy exactly
+  around a release. Legacy pending lines still fold under the sending version.
+- **A failed send no longer resends the version the collector accepted.** The flush
+  kept the whole day when one payload failed; with two versions in a day that is a
+  duplicate row, so it now keeps only the refused day+version.
+- **`doctor` and `status` say when the published lethe is newer.** The install lines use
+  `npx @latest`, but a global install, a pinned version, or a harness that keeps its
+  server process can stay on an old release with no sign. The registry is asked at most
+  once a day, cached in the lethe home, and the answer is also added to the session
+  briefing on the next start. `LETHE_NO_UPDATE_CHECK=1` and `CI` turn it off.
+- **The opencode plugin and `hook show` no longer pin one machine's checkout path.** The
+  plugin defaulted to `/Users/a.arvanitidis/Projects/lethe/dist/cli.js`, so on every other
+  machine spawn failed silently and the plugin did nothing. `hook show` printed whatever
+  path it ran from, which for an npx or global install is a cache directory that stops
+  updating. Both now honour `LETHE_CLI` and otherwise run
+  `npx -y @alarv/lethe@latest hook prompt`, so the hook picks up a release with the next
+  session. A dev checkout keeps its absolute path.
+
+### Added
+
+- **`lethe --version`.** There was no way to ask a machine which release it had without
+  reading its package.json or running `doctor`.
+
 ## [0.3.2] - 2026-10-22
 
 ### Fixed

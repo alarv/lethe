@@ -9,8 +9,9 @@
  * `lethe telemetry off`, DO_NOT_TRACK=1 or LETHE_TELEMETRY=0 stops it, and an
  * explicit off is never overridden by anything.
  *
- * What leaves the machine is one summary per completed day: numbers, the lethe
- * version, and which kind of host connected (from a fixed list). Never a query,
+ * What leaves the machine is one summary per completed day and version: numbers,
+ * the lethe version that wrote them, and which kind of host connected (from a
+ * fixed list). Never a query,
  * title, body, path, repository, user, host name or timestamp finer than the
  * day, and no id that outlives a single server process -- the pids used to tell
  * sessions apart stay in the local file and are not sent. `lethe telemetry show`
@@ -154,14 +155,21 @@ export function counters(event: string, detail: string, extra: Record<string, un
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-/** Called by log() for every event. Must never throw and never block for long. */
+/**
+ * Called by log() for every event. Must never throw and never block for long.
+ *
+ * The version that wrote a counter is stored in the line, not read when the
+ * line is sent. A machine that upgrades before its next flush used to have an
+ * old day stamped with the new version, so the dashboard attributed usage to a
+ * release that had not run yet.
+ */
 export function record(event: string, detail: string, extra?: Record<string, unknown>): void {
   if (consent().state === "off") return;
   const lines = counters(event, detail, extra);
   if (!lines.length) return;
   try {
     mkdirSync(dir(), { recursive: true });
-    const prefix = `${today()} ${process.pid} `;
+    const prefix = `${today()} ${process.pid} v${version()} `;
     appendFileSync(pendingPath(), lines.map((l) => prefix + l + "\n").join(""), "utf8");
   } catch {
     // Telemetry must never break the caller.
@@ -191,25 +199,38 @@ export interface Summary {
   distiller_failures: number;
 }
 
-/** Fold counter lines into one summary per day. pids are used here and dropped. */
+/**
+ * One counter line: `<day> <pid> [v<version> ]<name>[ <arg>]`.
+ *
+ * The version token is optional so a pending.log written by an older lethe
+ * still folds; those lines fall back to the version doing the folding.
+ */
+const COUNTER_LINE = /^(\d{4}-\d{2}-\d{2}) (\d+) (?:v(\S+) )?(\w+)(?: (\S+))?$/;
+
+/** Fold counter lines into one summary per day and version. pids are used here and dropped. */
 export function summarise(lines: string[], v = version()): Summary[] {
   const days = new Map<string, { s: Summary; started: Set<string>; using: Set<string>; recalling: Set<string> }>();
   for (const line of lines) {
-    const m = /^(\d{4}-\d{2}-\d{2}) (\d+) (\w+)(?: (\S+))?$/.exec(line.trim());
+    const m = COUNTER_LINE.exec(line.trim());
     if (!m) continue;
-    const [, day, pid, name, arg] = m as unknown as [string, string, string, string, string | undefined];
-    let d = days.get(day);
+    const [, day, pid, lineVersion, name, arg] = m as unknown as
+      [string, string, string, string | undefined, string, string | undefined];
+    const version = lineVersion ?? v;
+    // A day can hold two versions: upgrade before the next flush and the
+    // old version's counters must keep their own row, not become the new one.
+    const key = `${day}\u0000${version}`;
+    let d = days.get(key);
     if (!d) {
       d = {
         s: {
-          schema: 1, v, day, hosts: {}, sessions: 0, sessions_using: 0, sessions_recalling: 0,
+          schema: 1, v: version, day, hosts: {}, sessions: 0, sessions_using: 0, sessions_recalling: 0,
           recalls: 0, recalls_hook: 0, recalls_empty: 0, notes: 0, confirms: 0, corrections: 0,
           forgets: 0, learns: 0, briefed: 0, compactions: 0, claims_kept: 0, claims_rejected: 0,
           distiller_failures: 0,
         },
         started: new Set(), using: new Set(), recalling: new Set(),
       };
-      days.set(day, d);
+      days.set(key, d);
     }
     const s = d.s;
     switch (name) {
@@ -238,7 +259,7 @@ export function summarise(lines: string[], v = version()): Summary[] {
       sessions_using: [...using].filter((p) => started.has(p)).length,
       sessions_recalling: [...recalling].filter((p) => started.has(p)).length,
     }))
-    .sort((a, b) => a.day.localeCompare(b.day));
+    .sort((a, b) => a.day.localeCompare(b.day) || a.v.localeCompare(b.v));
 }
 
 function readLines(path: string): string[] {
@@ -247,6 +268,12 @@ function readLines(path: string): string[] {
   } catch {
     return [];
   }
+}
+
+/** The version a pending line was written by; legacy lines have none. */
+function lineVersion(line: string): string {
+  const m = /^\d{4}-\d{2}-\d{2} \d+ v(\S+) /.exec(line);
+  return m?.[1] ?? version();
 }
 
 /** Every counter line not yet sent, across the pending file and interrupted sends. */
@@ -314,14 +341,22 @@ export async function flush(send: Post = post): Promise<{ sent: number; kept: nu
   const oldest = new Date(Date.now() - MAX_AGE_DAYS * 86400_000).toISOString().slice(0, 10);
 
   let sent = 0;
-  const keepDays = new Set<string>([t]);
+  const keep = new Set<string>();
   for (const s of summarise(lines)) {
     if (s.day >= t) continue;
     if (s.day < oldest) continue; // too old for the collector; drop it
     if (await send(url, JSON.stringify(s))) sent += 1;
-    else keepDays.add(s.day);
+    // Keep only the day+version the collector refused. Keeping the whole day
+    // would resend a version it had already taken, and now that one day can
+    // hold two versions that is a duplicate row rather than a harmless retry.
+    else keep.add(`${s.day}\u0000${s.v}`);
   }
-  const kept = lines.filter((l) => keepDays.has(l.slice(0, 10)));
+  const kept = lines.filter((l) => {
+    const day = l.slice(0, 10);
+    if (day >= t) return true; // today is still being written
+    if (day < oldest) return false;
+    return keep.has(`${day}\u0000${lineVersion(l)}`);
+  });
   try {
     if (kept.length) appendFileSync(pendingPath(), kept.join("\n") + "\n", "utf8");
     for (const f of claimed) unlinkSync(f);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderMemories } from "./hook.js";
+import { hookCommand, renderMemories } from "./hook.js";
 
 const mem = (over: Partial<Parameters<typeof renderMemories>[0][0]> = {}) => ({
   id: "abcdef1234567890", kind: "claim", title: "Tests need containers",
@@ -210,4 +210,18 @@ test("prompts the harness wrote are not questions", () => {
   assert.ok(isMachinePrompt("[Request interrupted by user]"));
   assert.ok(!isMachinePrompt("why does the build fail after the <tag> change?"));
   assert.ok(!isMachinePrompt("ok now let's check if telemetry is working"));
+});
+
+test("the hook updates with npx and stays absolute for a dev checkout", () => {
+  const npx = "/home/me/.npm/_npx/abc123/node_modules/@alarv/lethe/dist/cli.js";
+  assert.equal(hookCommand(npx), "npx -y @alarv/lethe@latest hook prompt");
+  assert.equal(
+    hookCommand("/usr/lib/node_modules/@alarv/lethe/dist/cli.js"),
+    "npx -y @alarv/lethe@latest hook prompt",
+    "a global install follows the latest release too",
+  );
+  assert.equal(
+    hookCommand("/Users/me/Projects/lethe/dist/cli.js"),
+    "node --disable-warning=ExperimentalWarning /Users/me/Projects/lethe/dist/cli.js hook prompt",
+  );
 });

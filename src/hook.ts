@@ -151,6 +151,23 @@ export function isMachinePrompt(prompt: string): boolean {
   return MACHINE.test(prompt);
 }
 
+/**
+ * The command a host should run on every prompt.
+ *
+ * `lethe hook show` used to print the absolute path it was itself running from.
+ * When that path is an npx cache or a global install, it is exactly the path
+ * that stops updating: a new release lands somewhere else, and the hook keeps
+ * executing the old directory forever. Running `@latest` through npx makes the
+ * hook update with the server. A dev checkout keeps its absolute path, because
+ * there is no published package to ask for.
+ */
+export function hookCommand(bin = process.argv[1] ?? "lethe"): string {
+  if (/[\\/]_npx[\\/]|[\\/]node_modules[\\/]/.test(bin)) {
+    return "npx -y @alarv/lethe@latest hook prompt";
+  }
+  return `node --disable-warning=ExperimentalWarning ${bin} hook prompt`;
+}
+
 export async function promptHook(): Promise<void> {
   try {
     const raw = await readStdin();

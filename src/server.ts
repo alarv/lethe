@@ -16,6 +16,7 @@ import { compact, type Distiller } from "./compact.js";
 import { repairLeakedArgs } from "./repair.js";
 import { type Brief, brief } from "./brief.js";
 import { flush, version } from "./telemetry.js";
+import { refreshUpdate, updateNotice } from "./update.js";
 import { buildStamp, log } from "./log.js";
 import { logResolved, resolveDistiller } from "./distil.js";
 import { LEARN_INSTRUCTIONS, gate, seed, seeded, writeWatermark } from "./learn.js";
@@ -105,7 +106,12 @@ export function holds(b: Brief): string {
 /** Exactly what a session starting in this store's directory is told. */
 export function sessionInstructions(store: Store): { text: string; briefing: Brief } {
   const briefing = brief(store.all());
-  return { text: briefing.text ? `${INSTRUCTIONS}\n\n${briefing.text}` : INSTRUCTIONS, briefing };
+  // From the cache written by a previous server, never a network call here:
+  // instructions are built before the first token, and a session that already
+  // runs an old binary cannot be fixed by one line of text anyway.
+  const update = updateNotice();
+  const text = [INSTRUCTIONS, briefing.text, update].filter(Boolean).join("\n\n");
+  return { text, briefing };
 }
 
 export function createServer(cwd = process.cwd()): McpServer {
@@ -501,4 +507,6 @@ export async function serve(): Promise<void> {
   });
   // Off the latency path and silent on failure; a no-op when off.
   void flush().catch(() => {});
+  // Once a day at most, and never awaited: the answer is for the next session.
+  void refreshUpdate().catch(() => {});
 }
