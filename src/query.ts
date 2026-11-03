@@ -190,7 +190,17 @@ export function matchExpression(query: string): string | null {
  */
 const MIN_TERM_COVERAGE = 2;
 /**
- * A term this rare in the store is evidence on its own.
+ * Above two terms, coverage scales with the query.
+ *
+ * Agents write long recall queries -- "spotlight cluster driver memory checkpoint
+ * degradation", twelve terms for an operator rollout -- and two of twelve is a
+ * bar any memory from the same project clears. Replaying 58 real recalls, 51
+ * came back with exactly 8 hits and the same briefing memories turned up across
+ * unrelated topics. A third of the terms keeps short queries at two.
+ */
+const COVERAGE_FRACTION = 1 / 3;
+/**
+ * A term this rare in the store is evidence worth a second term.
  *
  * Requiring two terms unconditionally rejected "what did we decide about
  * embeddings": only "decide" and "embeddings" survive stopword removal, and the
@@ -270,7 +280,11 @@ export function admit<T extends { title: string; body: string }>(
   queryTerms: string[],
   { total, df }: Frequencies,
 ): T[] {
-  const needed = Math.min(MIN_TERM_COVERAGE, queryTerms.length);
+  const distinct = new Set(queryTerms.map(stem)).size;
+  const needed = Math.min(
+    Math.max(MIN_TERM_COVERAGE, Math.ceil(distinct * COVERAGE_FRACTION)),
+    distinct,
+  );
   const rareCutoff = total * RARE_TERM_FRACTION;
 
   return found.filter((m) => {
@@ -283,6 +297,9 @@ export function admit<T extends { title: string; body: string }>(
       const seen = df.get(t);
       if (seen !== undefined && seen > 0 && seen <= rareCutoff) rareHit = true;
     }
-    return covered >= needed || (covered >= 1 && rareHit);
+    // A rare term counts double rather than admitting alone. Alone was right for
+    // two-term queries and wrong for long ones: in a 104-memory store the cutoff
+    // is 26, so one shared "ci" or "package" let any memory into a nine-term recall.
+    return covered + (rareHit ? 1 : 0) >= needed;
   });
 }

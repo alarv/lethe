@@ -354,3 +354,21 @@ test("a run that kept a claim clears the failure streak", () => {
   ]);
   assert.equal(h.failures, 0);
 });
+
+test("counts repeat recalls, notes written first, and confirms after a nudge", () => {
+  const m = metrics([
+    line("2026-01-01T00:00:00Z", "start", "mcp server connected  pid=1"),
+    line("2026-01-01T00:00:01Z", "start", "mcp server connected  pid=2"),
+    line("2026-01-01T00:01:00Z", "recall", "q  hits=2 ids=aaaa,bbbb pid=1"),
+    line("2026-01-01T00:02:00Z", "note", "n2  id=x kind=episode pid=2"),
+    line("2026-01-01T00:03:00Z", "recall", "q2  hits=1 ids=cccc pid=1"),
+    line("2026-01-01T00:04:00Z", "note", "n1  id=y kind=episode nudged=3 pid=1"),
+    line("2026-01-01T00:05:00Z", "confirm", "t  id=aaaa pid=1"),
+    line("2026-01-01T00:06:00Z", "recall", "q3  hits=1 via=hook pid=2"),
+  ]);
+  assert.equal(m.sessionsRecallingAgain, 1, "hook recalls do not count as the model recalling");
+  assert.equal(m.sessionsNotingFirst, 1);
+  assert.equal(m.nudges, 1);
+  assert.equal(m.judgedAfterNudge, 1);
+  assert.match(formatMetrics(m), /judged after a note nudge/);
+});

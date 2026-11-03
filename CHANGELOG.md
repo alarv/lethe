@@ -9,6 +9,30 @@ still move.
 
 The release workflow refuses to publish a version with no section here.
 
+## [0.4.0] - 2026-11-03
+
+### Changed
+
+- **A note names the recalled memories still waiting for confirm or correct.** The recall
+  footer has asked for confirm since September and confirm stayed at 3 calls against ~63
+  model recalls: at recall time nothing is known yet, and later nothing asks. A note is
+  the call that reliably comes after the work, so its result now lists up to five ids
+  recalled this session and not yet judged, once each. Logged as `nudged=`.
+- **The session instructions name the mid-task moments to recall again.** 38 of the 51
+  sessions that used lethe opened with a recall and only 9 recalled a second time; hosts
+  that defer MCP tool schemas never show the recall description, so the instructions
+  now say it: a new error, unfamiliar code, a config change or deploy.
+- **Long recall queries no longer fill the result list with near-misses.** Coverage
+  scales to a third of the query's terms above two, and a rare term counts as one extra
+  term instead of admitting a memory alone. On 58 replayed real recalls, results at the
+  8-hit cap fell from 51 to 30; eval precision 67% -> 78% with compact MRR unchanged.
+
+### Added
+
+- **`lethe metrics` shows whether those changes worked:** sessions that recalled more than
+  once, sessions that noted before recalling, and confirms or corrections after a note
+  nudge. Before this release (from 2026-10-02): 23%, 24%, and none.
+
 ## [0.3.3] - 2026-10-23
 
 ### Fixed

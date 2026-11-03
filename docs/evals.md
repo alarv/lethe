@@ -177,14 +177,16 @@ and **off-topic** (share of no-answer tasks that returned anything). The no-answ
 are excluded from hit@k and MRR, so the earlier rows did not move.
 
 A third mechanism, `recall`, is what the recall tool returns: fts5 plus a relevance floor
-(the prompt hook's rule — two content terms from the question, or one rare term), applied
-to every hit but the first.
+(the prompt hook's rule — two content terms from the question, or a third of them for long
+queries, with a rare term counting double), applied to every hit but the first.
 
 | mechanism, compact | MRR | precision | off-topic |
 |---|---|---|---|
 | `fts5` | 0.94 | 42% | 100% |
 | floor on every hit (rejected) | 0.78 | 77% | 50% |
 | `recall` — floor on all but the top hit | 0.89 | 75% | 100% |
+| same, re-run on the 0.3.3 fixtures | 0.86 | 67% | 100% |
+| coverage scales with query length, rare term counts double | 0.86 | 78% | 100% |
 
 **The trade, stated.** The floor buys 33 points of precision for 0.05 MRR: two paraphrased
 questions whose answer sat at rank 2 sharing one ordinary word. Flooring the top hit too
@@ -192,6 +194,13 @@ was worse — it dropped rank-1 answers for the same reason. A paraphrase and an
 memory can each share exactly one word with a question, and no lexical rule separates
 them. Off-topic stays at 100%: recall still always answers. That is the ceiling of
 keyword retrieval, not a tuning problem.
+
+**Long queries.** The fixtures ask short questions; agents do not. Replaying 58 real recalls
+against a copy of a 104-memory store, 51 returned exactly 8 hits: two of nine terms is a
+bar any memory from the same project clears, and with the rare cutoff at a quarter of the
+store, one shared "ci" was enough on its own. Requiring a third of the terms and counting
+a rare term as two brought that to 30 of 58 at the cap (mean 7.6 -> 6.3 hits), with
+compact MRR unchanged and raw MRR 0.88 -> 0.86.
 
 On the real store the floor alone did little (mean hits 8.0 -> 7.5): real questions are
 long and one project's memories share a vocabulary, so two common terms are easy to match.

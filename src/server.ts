@@ -29,6 +29,9 @@ import { LEARN_INSTRUCTIONS, gate, seed, seeded, writeWatermark } from "./learn.
  */
 const RECALL_REINFORCEMENT = 0.02;
 
+/** How many unjudged recalls a note lists; more is a wall nobody reads. */
+const NUDGE_LIMIT = 5;
+
 function render(m: Memory): string {
   const from = m.fromProject ? ` — from ${m.fromProject}` : "";
   return [
@@ -80,11 +83,21 @@ const MAX_RAW_AGE_MS = num(process.env.LETHE_MAX_RAW_HOURS, 24) * 60 * 60 * 1000
  * install, so it carries the reminder and the briefing (brief.ts) for anyone,
  * including a repo whose AGENTS.md says nothing about lethe.
  */
+/*
+ * Measured over 110 Claude Code sessions: 38 of the 51 that used lethe opened
+ * with a recall, and only 9 recalled a second time. The reminder was read as a
+ * start-of-session ritual. Hosts that defer MCP tool schemas never show the
+ * recall description up front, so this text has to name the mid-task moments
+ * itself.
+ */
 const INSTRUCTIONS =
   "lethe is this project's memory across sessions. Before investigating anything " +
   "non-trivial -- a failing test or build, an unfamiliar area, a setup problem -- call " +
-  "recall first: it may already be solved. Record durable lessons with note. When a " +
-  "recalled memory proved right, confirm it; when it is wrong, correct it.";
+  "recall first: it may already be solved. Not only at the start: call it again " +
+  "mid-task whenever a command fails with an error you have not seen, you open an " +
+  "unfamiliar part of the code, or you are about to change config or deploy. Record " +
+  "durable lessons with note. When a recalled memory proved right, confirm it; when " +
+  "it is wrong, correct it.";
 
 /**
  * One sentence naming what is stored, for the recall description.
@@ -181,6 +194,17 @@ export function createServer(cwd = process.cwd()): McpServer {
     };
   }
 
+  /**
+   * Recalled this session and not yet judged, id -> title.
+   *
+   * The recall footer has asked for confirm since 2026-09-15 and confirm stayed
+   * at 3 calls in ~63 model recalls: at recall time nothing is known yet, and by
+   * the time it is the model has moved on. A note is the one call that reliably
+   * comes after the work, so its result names what is still waiting. Emptied by
+   * the nudge, so each id is asked about once.
+   */
+  const unjudged = new Map<string, string>();
+
   let compacting = false;
 
   /**
@@ -260,6 +284,7 @@ export function createServer(cwd = process.cwd()): McpServer {
       // is not evidence of being useful; confirm is (0.4). accessCount still
       // moves, which frequency-driven consolidation depends on.
       store.touchAll(hits.filter((m) => !m.fromProject), RECALL_REINFORCEMENT);
+      for (const m of hits) unjudged.set(m.id.slice(0, 8), m.title);
       log("recall", JSON.stringify(query), {
         hits: hits.length,
         // Lets a later confirm be matched back to the recall that surfaced it --
@@ -300,9 +325,24 @@ export function createServer(cwd = process.cwd()): McpServer {
     async (args) => {
       await ensureBound();
       const m = store.create({ ...args, ...repairLeakedArgs(args) });
-      log("note", m.title, { id: m.id.slice(0, 8), kind: m.kind });
+      const waiting = [...unjudged].slice(0, NUDGE_LIMIT);
+      unjudged.clear();
+      log("note", m.title, {
+        id: m.id.slice(0, 8),
+        kind: m.kind,
+        ...(waiting.length ? { nudged: waiting.length } : {}),
+      });
       relievePressure();
-      return { content: [{ type: "text", text: `recorded [${m.id.slice(0, 8)}] ${m.title}` }] };
+      const lines = [`recorded [${m.id.slice(0, 8)}] ${m.title}`];
+      if (waiting.length) {
+        lines.push(
+          "",
+          "Recalled earlier in this session and not yet judged. If one of these helped " +
+            "or matched what you found, confirm <id>; if one was wrong, correct <id>:",
+          ...waiting.map(([id, title]) => `  [${id}] ${title}`),
+        );
+      }
+      return { content: [{ type: "text", text: lines.join("\n") }] };
     },
   );
 
@@ -405,6 +445,7 @@ export function createServer(cwd = process.cwd()): McpServer {
         };
       }
       store.confirm(m, author());
+      unjudged.delete(m.id.slice(0, 8));
       log("confirm", m.title, { id: m.id.slice(0, 8), strength: m.strength.toFixed(2) });
       return { content: [{ type: "text", text: `confirmed [${m.id.slice(0, 8)}]` }] };
     },
@@ -446,6 +487,7 @@ export function createServer(cwd = process.cwd()): McpServer {
         provenance: [old.id],
       });
       log("correct", `${old.title} -> ${next.title}`, { old: old.id.slice(0, 8) });
+      unjudged.delete(old.id.slice(0, 8));
       old.supersededBy = next.id;
       old.updated = new Date().toISOString();
       store.write(old);

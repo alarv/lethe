@@ -121,6 +121,20 @@ test("a single rare term is admitted on its own", () => {
   );
 });
 
+// Long recall queries are where padding came from: two of nine terms, or one
+// term under the rare cutoff, let any memory from the same project through.
+test("a long query needs more than one rare coincidence", () => {
+  const corpus = [
+    { title: "CI runs once per push tip", body: "bisect belongs locally" },
+    { title: "registry credentials live in vault", body: "the gitlab package registry reads them in ci" },
+    ...Array.from({ length: 10 }, (_, i) => ({ title: `other ${i}`, body: "unrelated content" })),
+  ];
+  const query = ["gitlab", "package", "registry", "credentials", "ci", "pipeline", "vault", "openshift", "runner"];
+  const admitted = relevantEnough(corpus.slice(0, 2), query, corpus).map((m) => m.title);
+  assert.deepEqual(admitted, ["registry credentials live in vault"],
+    "one shared rare term among nine is not a match; five shared terms are");
+});
+
 test("a single common term is still rejected", () => {
   const corpus = Array.from({ length: 10 }, (_, i) => ({
     title: `memory ${i}`, body: "this one worked fine in the end",

@@ -30,6 +30,17 @@ export interface Metrics {
   sessions: number;
   sessionsUsing: number;
   sessionsRecalling: number;
+  /**
+   * Sessions in which the model recalled more than once.
+   *
+   * Recall is meant to happen whenever something non-obvious comes up, not once
+   * at the top: measured before 0.4, 38 of 51 using sessions opened with recall
+   * and only 9 recalled again. Hook recalls are excluded -- they say nothing
+   * about whether the model reaches for it mid-task.
+   */
+  sessionsRecallingAgain: number;
+  /** Sessions whose first tool call was a note: written before anything was read. */
+  sessionsNotingFirst: number;
   recalls: number;
   /** Recalls the UserPromptSubmit hook performed, needing no model cooperation. */
   recallsViaHook: number;
@@ -49,6 +60,10 @@ export interface Metrics {
    * never as a rate.
    */
   confirmedAfterRecall: number;
+  /** Notes whose result listed recalled memories still waiting for confirm or correct. */
+  nudges: number;
+  /** Confirms and corrections that followed a nudge in the same session. */
+  judgedAfterNudge: number;
   /** Compaction runs that produced at least one claim. */
   compactions: number;
   /** Distiller calls that yielded nothing usable: an error, no reply, an unparseable one. */
@@ -159,11 +174,14 @@ export function metrics(lines: string[]): Metrics {
   // before pids were logged, and hook recalls (a separate process), fall back
   // to the most recent preceding start -- approximate, because sessions
   // interleave, which is exactly why the pid is there now.
-  type Session = { used: boolean; recalled: boolean; recalledAny: boolean };
+  type Session = {
+    used: boolean; recalled: boolean; recalledAny: boolean;
+    modelRecalls: number; first: string | null; nudged: boolean;
+  };
   const sessions: Session[] = [];
   const byPid = new Map<string, Session>();
   let recalls = 0, recallsViaHook = 0, notes = 0, confirms = 0, corrections = 0, emptyRecalls = 0;
-  let hitTotal = 0, hitCount = 0, confirmedAfterRecall = 0;
+  let hitTotal = 0, hitCount = 0, confirmedAfterRecall = 0, nudges = 0, judgedAfterNudge = 0;
   let compactions = 0, compactionsFailed = 0, claimsKept = 0, claimsRejected = 0;
   const builds = new Set<string>();
 
@@ -177,7 +195,9 @@ export function metrics(lines: string[]): Metrics {
       // The server logs other start lines (briefed, bound to a workspace root)
       // within the same session; only the connection opens one.
       if (!/\bconnected\b/.test(e.rest)) continue;
-      const session = { used: false, recalled: false, recalledAny: false };
+      const session: Session = {
+        used: false, recalled: false, recalledAny: false, modelRecalls: 0, first: null, nudged: false,
+      };
       sessions.push(session);
       const pid = /\bpid=(\d+)/.exec(e.rest)?.[1];
       if (pid) byPid.set(pid, session);
@@ -190,12 +210,18 @@ export function metrics(lines: string[]): Metrics {
     // Only a tool call counts as use. compact, sampling and index lines are the
     // server doing its own housekeeping, and counting them reported 63% of
     // sessions as using lethe when the model had called it in 40%.
-    if (current && TOOL_CALLS.has(e.event)) current.used = true;
+    if (current && TOOL_CALLS.has(e.event)) {
+      current.used = true;
+      // The hook recalls before the model has done anything, so it cannot be
+      // the model's first move.
+      if (!(e.event === "recall" && /\bvia=hook\b/.test(e.rest))) current.first ??= e.event;
+    }
 
     switch (e.event) {
       case "recall": {
         recalls += 1;
         if (/\bvia=hook\b/.test(e.rest)) recallsViaHook += 1;
+        else if (current) current.modelRecalls += 1;
         if (current) current.recalled = true;
         const hits = Number(/hits=(\d+)/.exec(e.rest)?.[1] ?? NaN);
         if (Number.isFinite(hits)) {
@@ -214,13 +240,19 @@ export function metrics(lines: string[]): Metrics {
       }
       case "note":
         notes += 1;
+        if (/\bnudged=\d+/.test(e.rest)) {
+          nudges += 1;
+          if (current) current.nudged = true;
+        }
         break;
       case "confirm":
         confirms += 1;
         if (current?.recalledAny) confirmedAfterRecall += 1;
+        if (current?.nudged) judgedAfterNudge += 1;
         break;
       case "correct":
         corrections += 1;
+        if (current?.nudged) judgedAfterNudge += 1;
         break;
       case "compact":
         // The log records several lines per run; count outcomes, not chatter.
@@ -244,6 +276,8 @@ export function metrics(lines: string[]): Metrics {
     sessions: sessions.length,
     sessionsUsing: sessions.filter((s) => s.used).length,
     sessionsRecalling: sessions.filter((s) => s.recalled).length,
+    sessionsRecallingAgain: sessions.filter((s) => s.modelRecalls > 1).length,
+    sessionsNotingFirst: sessions.filter((s) => s.first === "note").length,
     recalls,
     recallsViaHook,
     notes,
@@ -252,6 +286,8 @@ export function metrics(lines: string[]): Metrics {
     emptyRecalls,
     meanHits: hitCount ? hitTotal / hitCount : 0,
     confirmedAfterRecall,
+    nudges,
+    judgedAfterNudge,
     compactions,
     compactionsFailed,
     claimsKept,
@@ -375,6 +411,10 @@ export function formatMetrics(m: Metrics, now: Date = new Date()): string {
   row("called recall", `${m.sessionsRecalling}`, pct(m.sessionsRecalling, m.sessions));
   row("never touched it", `${m.sessions - m.sessionsUsing}`,
     pct(m.sessions - m.sessionsUsing, m.sessions));
+  row("recalled more than once", `${m.sessionsRecallingAgain}`,
+    m.sessionsRecalling ? `${pct(m.sessionsRecallingAgain, m.sessionsRecalling)} of recalling sessions` : "");
+  row("noted before recalling", `${m.sessionsNotingFirst}`,
+    pct(m.sessionsNotingFirst, m.sessionsUsing) + " of using sessions");
 
   lines.push("");
   lines.push(heading("balance — memory should be read far more often than written"));
@@ -400,6 +440,8 @@ export function formatMetrics(m: Metrics, now: Date = new Date()): string {
   row("mean hits when non-empty", m.meanHits.toFixed(1));
   row("confirmed after a recall", String(m.confirmedAfterRecall),
     "floor only — confirm needs the model to call it");
+  row("judged after a note nudge", `${m.judgedAfterNudge}`,
+    m.nudges ? `${m.nudges} notes listed unjudged recalls` : "no nudges logged yet");
   row("corrections", String(m.corrections));
 
   if (!m.recallsViaHook) {
