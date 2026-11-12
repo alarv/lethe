@@ -18,8 +18,9 @@ The release workflow refuses to publish a version with no section here.
   discovers something and a probe session in a fresh context that needs it, under the
   three launch conditions (`auto`, `lethe`, `both`) plus a `cold` harness check. Each run
   gets its own sandbox repo, `LETHE_HOME` and `CLAUDE_CONFIG_DIR`, so it cannot read the
-  operator's memory or settings. Built and mock-verified; it has not been run against a
-  model, and `docs/evals.md` says so.
+  operator's memory or settings. The smoke scenario grades with a file assertion and a
+  command exit, so both assertion paths a real scenario needs are exercised. Built and
+  mock-verified; it has not been run against a model, and `docs/evals.md` says so.
 - **A test that the release manifests agree.** `package.json`, `server.json`,
   `.claude-plugin/plugin.json` and the marketplace each carry part of a release, and
   nothing checked that they agreed until a directory reviewer did.
