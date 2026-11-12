@@ -231,6 +231,8 @@ logs, the project should stop.
 - [`docs/compact.md`](docs/compact.md) — the consolidation pass, when it runs, and who
   provides the model.
 - [`docs/evals.md`](docs/evals.md) — what we measure and why.
+- [`docs/claude-memory.md`](docs/claude-memory.md) — how this differs from Claude Code's
+  built-in memory, and when to use which.
 - [`docs/api-design.md`](docs/api-design.md) — the rules the tool surface is held to.
 - [`CHANGELOG.md`](CHANGELOG.md) — what changed, and which failure it fixed.
 

@@ -9,6 +9,16 @@ still move.
 
 The release workflow refuses to publish a version with no section here.
 
+## [Unreleased]
+
+### Added
+
+- **`docs/claude-memory.md`: how lethe differs from Claude Code's built-in memory.** The
+  question every Claude Code user asks first, and the README had no answer. It says where
+  Claude's auto memory is better (no setup, always in context), where lethe differs
+  (team-reviewed claims, forgetting, any MCP host), and that retrieval quality is not the
+  claim. Shipped in the npm package.
+
 ## [0.4.0] - 2026-11-03
 
 ### Changed

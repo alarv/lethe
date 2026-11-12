@@ -34,6 +34,7 @@
     "docs/api-design.md",
     "docs/architecture.md",
     "docs/brain.md",
+    "docs/claude-memory.md",
     "docs/compact.md",
     "docs/evals.md",
     "CHANGELOG.md",
