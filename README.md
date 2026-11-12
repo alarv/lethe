@@ -48,6 +48,13 @@ Works in any host that speaks MCP.
 claude mcp add lethe --scope user -- npx -y @alarv/lethe@latest mcp
 ```
 
+Or as a plugin:
+
+```
+/plugin marketplace add alarv/lethe
+/plugin install lethe@lethe
+```
+
 **opencode** — `~/.config/opencode/opencode.json` for every project, or `opencode.json`
 in a repo for just that one:
 
