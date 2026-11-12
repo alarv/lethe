@@ -11,6 +11,28 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+### Added
+
+- **An end-to-end agent eval harness (`npm run eval:agent`).** The retrieval eval measures
+  the layer under the turns/tokens claim; this runs the claim itself: a seed session that
+  discovers something and a probe session in a fresh context that needs it, under the
+  three launch conditions (`auto`, `lethe`, `both`) plus a `cold` harness check. Each run
+  gets its own sandbox repo, `LETHE_HOME` and `CLAUDE_CONFIG_DIR`, so it cannot read the
+  operator's memory or settings. Built and mock-verified; it has not been run against a
+  model, and `docs/evals.md` says so.
+- **A test that the release manifests agree.** `package.json`, `server.json`,
+  `.claude-plugin/plugin.json` and the marketplace each carry part of a release, and
+  nothing checked that they agreed until a directory reviewer did.
+
+### Fixed
+
+- **The Claude Code plugin manifests now validate.** `claude plugin validate` failed on
+  both: `plugin.json` launched `@latest` (blocked by Anthropic's directory validation) and
+  carried a `displayName` key the schema rejects; `marketplace.json` had a root
+  `description` instead of `metadata.description`. The launcher now pins the release
+  version, which means `plugin.json` must be bumped with every release; the new manifest
+  test fails if the pin or the versions drift.
+
 ## [0.4.1] - 2026-11-12
 
 ### Added

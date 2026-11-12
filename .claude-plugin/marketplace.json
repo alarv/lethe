@@ -1,6 +1,8 @@
 {
   "name": "lethe",
-  "description": "lethe: memory for coding agents that forgets on purpose",
+  "metadata": {
+    "description": "lethe: memory for coding agents that forgets on purpose"
+  },
   "owner": { "name": "alarv", "url": "https://github.com/alarv" },
   "plugins": [
     {

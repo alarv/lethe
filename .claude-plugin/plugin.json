@@ -1,6 +1,5 @@
 {
   "name": "lethe",
-  "displayName": "lethe",
   "version": "0.4.1",
   "description": "Memory for coding agents that forgets on purpose. Distilled, reviewable markdown in your repo.",
   "author": { "name": "alarv" },
@@ -11,7 +10,7 @@
   "mcpServers": {
     "lethe": {
       "command": "npx",
-      "args": ["-y", "@alarv/lethe@latest", "mcp"]
+      "args": ["-y", "@alarv/lethe@0.4.1", "mcp"]
     }
   }
 }

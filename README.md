@@ -217,7 +217,8 @@ section on where we break from biology.
 
 ## Evaluations
 
-[`docs/evals.md`](docs/evals.md) — public, and it reports where lethe loses.
+[`docs/evals.md`](docs/evals.md) — public, and it reports where lethe loses. Retrieval is
+measured today; the end-to-end turns/tokens harness is built but not yet run.
 
 The claim under test: an agent with distilled memory reaches a correct answer in fewer
 turns and fewer tokens than one with raw session logs. If distillation can't beat raw

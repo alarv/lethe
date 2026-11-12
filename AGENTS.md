@@ -103,6 +103,11 @@ entry, so a release without notes fails rather than shipping something nobody ca
 Tags are `v`-prefixed (`v0.0.1`), which is what `npm version` produces by default. The
 workflow accepts either form and validates the tag against `package.json`.
 
+The version also lives in `server.json` and `.claude-plugin/plugin.json` (whose launcher
+pins the exact release, because Anthropic's directory validation blocks `@latest`).
+`npm version` only bumps `package.json`; update the other two by hand. `npm test` fails if
+they disagree, which stops a tag from publishing a plugin that installs the wrong build.
+
 **The tag must be annotated.** `git push --follow-tags` silently ignores lightweight
 tags, so `git tag v0.0.1 && git push --follow-tags` creates a local tag, pushes nothing,
 and the release never happens with no error anywhere. Use one of:

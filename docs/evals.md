@@ -128,13 +128,20 @@ look at it until the design is frozen.
 
 ## Status
 
-Built, at `evals/run.ts`. `npm run eval` measures retrieval quality only — it does not run
-agents, so it does not yet measure the primary metrics above (turns to correct, context
-tokens). It measures the layer underneath them: if retrieval over distilled claims cannot
-beat retrieval over the episodes they came from, nothing downstream can.
+Two harnesses, at different layers.
 
-The 24 tasks (18 answerable, 6 no-answer) are synthetic, which is the largest caveat on
-everything below. Real dogfooded pairs remain the goal.
+`evals/run.ts` (`npm run eval`) measures retrieval quality. It does not run agents, so it
+does not measure the primary metrics above (turns to correct, context tokens). It measures
+the layer underneath them: if retrieval over distilled claims cannot beat retrieval over
+the episodes they came from, nothing downstream can.
+
+`evals/agent/run.ts` (`npm run eval:agent`) runs whole sessions against a model and
+measures those primary metrics. It is built and mock-verified, but **has not been run
+against a model yet**, so it has produced no results. The section at the end of this
+document says what it does and what is still missing.
+
+The 24 retrieval tasks (18 answerable, 6 no-answer) are synthetic, which is the largest
+caveat on everything below. Real dogfooded pairs remain the goal.
 
 ## Results
 
@@ -229,3 +236,54 @@ Each cell is five repeats, but this is still a retrieval measurement, not the
 turns/tokens claim at the top of this document. At 24 tasks a 0.02 MRR difference is
 noise; the honest reading is that recall and raw are close, with recall trading rank for
 precision.
+
+## End-to-end agent runs
+
+`npm run eval:agent` runs a **seed** session that discovers something and a **probe**
+session, in a fresh context, that needs it. It records turns to a correct result, tokens
+consumed, and whether the task was solved at all — the primary metrics this document
+defined before there was a harness.
+
+### Conditions
+
+| Condition | Claude auto memory | lethe |
+|---|---|---|
+| `auto` | on | off |
+| `lethe` | off (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`) | on |
+| `both` | on | on |
+| `cold` | off | off — harness check only, not a product comparison |
+
+`cold` exists to make the harness fail loudly when it should: a run with no memory that
+solves the task means the isolation or the grading is broken. It is not one of the launch
+conditions and its numbers are not a claim about lethe.
+
+### Isolation
+
+Each run gets its own sandbox repository, its own `LETHE_HOME` and its own
+`CLAUDE_CONFIG_DIR`. That is what keeps a run from seeing the previous one, touching the
+operator's `~/.lethe`, or inheriting their auto memory and settings. Telemetry is off for
+every process the harness starts. Credentials are never read, written or printed; because
+`CLAUDE_CONFIG_DIR` is isolated, a real run needs `ANTHROPIC_API_KEY` in the environment.
+
+### Grading and artefacts
+
+Checks are assertions: a file with the expected content, or a command that must exit a
+given way. LLM-as-judge is not used for the headline number. Every run, including failures
+and errors, is written to `evals/results/agent-<timestamp>/runs.jsonl`, with a
+`summary.json` beside it. `evals/results/` is gitignored so raw runs are published
+deliberately rather than accumulating in the repository.
+
+### What is missing
+
+The only shipped scenario is `smoke`. It exists to prove the harness wires conditions,
+carries memory between the two sessions, isolates them, and grades a failure. Its numbers
+are invented by a mock agent and **must never be published as a result**. What is still
+needed:
+
+- real scenarios whose checks run the project's own tests, not a marker file;
+- 30–50 (seed, probe) pairs harvested from real sessions, per the method above;
+- a model and date recorded with every published run;
+- the runs themselves, including the ones where lethe loses.
+
+Until then the retrieval tables above are the only measurements, and they do not support
+the turns/tokens claim.
