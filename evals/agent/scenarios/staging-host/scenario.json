@@ -1,0 +1,17 @@
+{
+  "id": "staging-host",
+  "category": "environment",
+  "provenance": "synthetic",
+  "seedPrompt": "The staging smoke test fails because STAGING_HOST is not set. Ours is staging-7.internal.example:8443. Get the test passing and record anything a future session would need.",
+  "probePrompt": "A fresh checkout has the same failing staging smoke test. Work out the cause and write the command that makes it pass, including the environment value, to a file named SOLVED.",
+  "seedAnswer": "STAGING_HOST=staging-7.internal.example:8443 npm test",
+  "repoMustNotContain": ["staging-7.internal.example:8443"],
+  "checkEnv": {
+    "LETHE_EXPECT_HOST": "staging-7.internal.example:8443"
+  },
+  "checks": [
+    { "kind": "file", "path": "SOLVED", "contains": "staging-7.internal.example:8443" },
+    { "kind": "file", "path": "SOLVED", "contains": "npm test" },
+    { "kind": "command", "command": ["node", "check.js"], "expectExit": 0 }
+  ]
+}

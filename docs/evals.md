@@ -265,11 +265,15 @@ Each run gets its own sandbox repository, its own `LETHE_HOME` and its own
 operator's `~/.lethe`, or inheriting their auto memory and settings. Telemetry is off for
 every process the harness starts. Credentials are never read, written or printed.
 
-`CLAUDE_CONFIG_DIR` isolates settings and auto memory, but Claude Code may still use the
-account the machine is logged in with (OAuth or the macOS keychain) even when that directory
-is changed. Set `ANTHROPIC_API_KEY` to pin a run to a specific account. A published run
-records the Claude Code version and model, because a result is only meaningful for the
-account and model that produced it.
+`CLAUDE_CONFIG_DIR` is fresh for every run, and a fresh one has no login. A real run
+therefore needs `ANTHROPIC_API_KEY` in the environment — an API key or the long-lived token
+from `claude setup-token`. It never reads the operator's keychain. A published run records
+the Claude Code version and model, because a result is only meaningful for the account and
+model that produced it.
+
+The probe starts from a fresh copy of the fixture, so anything the seed session wrote into
+the repository is discarded. Only memory survives: claims in `.lethe/` for the lethe
+conditions, and `LETHE_HOME` and `CLAUDE_CONFIG_DIR` for all of them.
 
 ### Grading and artefacts
 
@@ -281,10 +285,11 @@ deliberately rather than accumulating in the repository.
 
 ### What is missing
 
-The only shipped scenario is `smoke`. It exists to prove the harness wires conditions,
-carries memory between the two sessions, isolates them, and grades a failure. Its numbers
-are invented by a mock agent and **must never be published as a result**. What is still
-needed:
+The shipped scenarios — `smoke`, `staging-host`, `api-base` — are **synthetic**: written by
+hand, not harvested. Each is marked `provenance: synthetic` in `summary.json` and can only
+show that a told fact survived a fresh checkout. That is not the turns/tokens claim: a
+synthetic pair the agent was told in the seed session is close to tautological, and its
+numbers **must never be published as evidence about real work**. What is still needed:
 
 - real scenarios whose checks run the project's own tests, not a marker file. The fact the
   seed session learns must not be in the sandbox repository, the prompts, or the agent's
@@ -292,8 +297,8 @@ needed:
   A scenario declares those literals in `repoMustNotContain`, and the harness refuses to
   start if one appears in the fixture or the probe prompt. Eval-only variables are passed
   to the mock agent and to command checks, never to the real agent;
-- 30–50 (seed, probe) pairs harvested from real sessions, per the method above;
+- 30–50 (seed, probe) pairs harvested from real sessions, marked `provenance: harvested`;
 - the runs themselves, including the ones where lethe loses.
 
-Until then the retrieval tables above are the only measurements, and they do not support
-the turns/tokens claim.
+Until then synthetic results measure persistence, the retrieval tables above are the only
+other measurements, and neither supports the turns/tokens claim.

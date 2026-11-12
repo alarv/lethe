@@ -14,6 +14,7 @@ One directory per scenario:
 {
   "id": "must match the directory name",
   "category": "environment | build | test | release | ...",
+  "provenance": "synthetic | harvested",
   "seedPrompt": "the first task; tells the agent the thing it must remember",
   "probePrompt": "the later task, worded differently",
   "seedAnswer": "what a correct result looks like; the mock agent reads this, nothing else does",
@@ -44,6 +45,17 @@ only. Neither is a place to hide an answer the agent will see.
 Start from `_template/`: copy it to `<id>/`, edit the id and prompts, and put the fixture
 in `repo/`. Directories whose name starts with `_` are never loaded.
 
+The probe starts from a fresh copy of `repo/`. Anything the seed session wrote or edited is
+discarded; only the memory stores survive — `.lethe/` for the lethe conditions, plus
+`LETHE_HOME` and `CLAUDE_CONFIG_DIR` for all of them.
+
+## Provenance
+
+`harvested` means the pair came from a real session. `synthetic` means it was written by
+hand; it can show that a fact survived a fresh checkout, not that real repeated work got
+cheaper. The summary records provenance, and a run containing synthetic pairs says so.
+Never present synthetic numbers as evidence about real work.
+
 ## What makes a usable pair
 
 Harvest from a real session: the agent learns something the repository does not state —
@@ -73,6 +85,7 @@ npm run eval:agent -- --agent=mock --scenarios=<id> --conditions=cold,auto,lethe
 npm run eval:agent -- --scenarios=<id> --repeats=3
 ```
 
-The second command is the real one. It uses whichever Claude Code account the machine is
-logged in with unless `ANTHROPIC_API_KEY` is set, records the Claude Code version and model
-in `summary.json`, and writes raw runs to `evals/results/`.
+The second command is the real one. A fresh `CLAUDE_CONFIG_DIR` has no login, so export
+`ANTHROPIC_API_KEY` first — an API key or the token from `claude setup-token`. The run
+records the Claude Code version and model in `summary.json` and writes raw runs to
+`evals/results/`.

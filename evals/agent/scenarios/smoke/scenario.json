@@ -1,6 +1,7 @@
 {
   "id": "smoke",
   "category": "environment",
+  "provenance": "synthetic",
   "seedPrompt": "The test suite fails with ECONNREFUSED. The fixture database is not in the repo; its URL is postgres://fixture:zq7Xk2@db.internal:5433/fixture. Get the suite passing and record anything a future session would need to know.",
   "probePrompt": "A fresh checkout has the same failing test suite. Work out the cause. If it is environmental, write the command that starts what is missing, including the connection string, to a file named SOLVED.",
   "seedAnswer": "TEST_DB_URL=postgres://fixture:zq7Xk2@db.internal:5433/fixture scripts/dev-db.sh",

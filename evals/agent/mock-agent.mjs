@@ -45,7 +45,7 @@ if (!answer) {
 
 if (phase === "seed") {
   if (mcp && cli) {
-    const r = spawnSync(process.execPath, [cli, "note", "fixture database must be started first", answer], {
+    const r = spawnSync(process.execPath, [cli, "note", "the fact a future session needs", answer], {
       encoding: "utf8",
       env: process.env,
     });
@@ -58,7 +58,7 @@ if (phase === "seed") {
 } else {
   let known = false;
   if (mcp && cli) {
-    const r = spawnSync(process.execPath, [cli, "recall", "tests failing fixture database"], {
+    const r = spawnSync(process.execPath, [cli, "recall", "the fact a future session needs"], {
       encoding: "utf8",
       env: process.env,
     });

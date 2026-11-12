@@ -20,11 +20,11 @@
  *   npm run eval:agent -- --agent=mock                   # plumbing check, no model
  *   npm run eval:agent -- --repeats=5 --conditions=auto,lethe
  *
- * It needs a model. CLAUDE_CONFIG_DIR isolates settings and auto memory, but
- * Claude Code may still use whatever account the machine is logged in with, so
- * set ANTHROPIC_API_KEY to pin the run to a specific account. Nothing here
- * reads, stores or prints credentials. A published run must name the Claude
- * Code version and model that produced it.
+ * It needs a model. CLAUDE_CONFIG_DIR is isolated per run, and a fresh one has
+ * no login, so the run authenticates with ANTHROPIC_API_KEY (or the long-lived
+ * token from `claude setup-token`). It never reads the operator's keychain.
+ * Nothing here reads, stores or prints credentials. A published run must name
+ * the Claude Code version and model that produced it.
  *
  * The only shipped scenario is `smoke`, which exists to prove the harness runs
  * end to end. It is not evidence for the thesis and its numbers must not be
@@ -71,6 +71,11 @@ type Check =
 interface Scenario {
   id: string;
   category: string;
+  /**
+   * `harvested` came from a real session; `synthetic` is written by hand. Only
+   * harvested pairs can support a claim about real work.
+   */
+  provenance?: "harvested" | "synthetic";
   /** What the seed session is asked to do. Discovers the thing worth keeping. */
   seedPrompt: string;
   /** The later task. Deliberately worded unlike the seed. */
@@ -180,15 +185,36 @@ function assertNoLeak(scenario: Scenario): void {
 function sandboxFor(scenario: Scenario): Sandbox {
   const base = mkdtempSync(join(tmpdir(), `lethe-agent-${scenario.id}-`));
   const repo = join(base, "repo");
-  cpSync(join(scenariosDir, scenario.id, "repo"), repo, { recursive: true });
-  // A repository, without depending on git being configured on this machine.
-  mkdirSync(join(repo, ".git", "refs", "heads"), { recursive: true });
-  writeFileSync(join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
+  copyFixture(scenario, repo);
   const home = join(base, "home");
   const config = join(base, "config");
   mkdirSync(home, { recursive: true });
   mkdirSync(config, { recursive: true });
   return { base, repo, home, config };
+}
+
+function copyFixture(scenario: Scenario, repo: string): void {
+  cpSync(join(scenariosDir, scenario.id, "repo"), repo, { recursive: true });
+  // A repository, without depending on git being configured on this machine.
+  mkdirSync(join(repo, ".git", "refs", "heads"), { recursive: true });
+  writeFileSync(join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
+}
+
+/**
+ * The probe is a fresh checkout, not the seed's working tree. Anything the seed
+ * wrote into the repository is discarded; memory survives only where it is
+ * supposed to: committed claims in `.lethe/` for the lethe conditions, and the
+ * stores outside the repo (`LETHE_HOME`, `CLAUDE_CONFIG_DIR`) for all of them.
+ */
+function resetRepo(s: Sandbox, scenario: Scenario, condition: Condition): void {
+  const keep = join(s.base, "repo-lethe-keep");
+  const keepMemory = condition === "lethe" || condition === "both";
+  const hasMemory = keepMemory && existsSync(join(s.repo, ".lethe"));
+  if (hasMemory) cpSync(join(s.repo, ".lethe"), keep, { recursive: true });
+  rmSync(s.repo, { recursive: true, force: true });
+  copyFixture(scenario, s.repo);
+  if (hasMemory) cpSync(keep, join(s.repo, ".lethe"), { recursive: true });
+  rmSync(keep, { recursive: true, force: true });
 }
 
 function envFor(agent: Agent, s: Sandbox, scenario: Scenario, condition: Condition, phase: Phase): NodeJS.ProcessEnv {
@@ -423,6 +449,12 @@ function summarise(records: Run[]): void {
 async function main(): Promise<void> {
   const agent = arg("agent", "claude") as Agent;
   if (agent !== "claude" && agent !== "mock") throw new Error(`unknown --agent=${agent}`);
+  if (agent === "claude" && !process.env.ANTHROPIC_API_KEY) {
+    throw new Error(
+      "no ANTHROPIC_API_KEY: a fresh CLAUDE_CONFIG_DIR has no login, so the run would fail 24 times.\n" +
+        "Run `claude setup-token`, export the token as ANTHROPIC_API_KEY, and retry.",
+    );
+  }
   const conditions = (arg("conditions", DEFAULT_CONDITIONS.join(",")).split(",") as Condition[]).filter((c) =>
     CONDITIONS.includes(c),
   );
@@ -442,11 +474,14 @@ async function main(): Promise<void> {
       `repeats, agent=${agent}`,
   );
   if (agent === "mock") console.log("mock agent: this checks the harness, not the thesis.");
+  const synthetic = scenarios.filter((s) => (s.provenance ?? "synthetic") === "synthetic").length;
+  if (synthetic) {
+    console.log(
+      `${synthetic} synthetic scenario(s): they can show a fact survived, not that real repeated work got cheaper.`,
+    );
+  }
   if (agent === "claude") {
     console.log(`claude ${version ?? "(version unknown)"}${model ? `, model ${model}` : ", account default model"}`);
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.log("no ANTHROPIC_API_KEY: this run uses whichever account the machine is logged in with.");
-    }
   }
   console.log("auto memory, lethe and the operator's settings are isolated per run.");
 
@@ -461,6 +496,7 @@ async function main(): Promise<void> {
           record.seed = seed.session;
           if (seed.error) record.error = seed.error;
           else {
+            resetRepo(s, scenario, condition);
             const probe = runSession(agent, scenario.probePrompt, condition, scenario, s, "probe", timeoutMs, budget, model);
             record.probe = probe.session;
             if (probe.error) record.error = probe.error;
@@ -496,7 +532,12 @@ async function main(): Promise<void> {
         conditions,
         repeats,
         startedAt: stamp,
-        scenarios: scenarios.map((s) => ({ id: s.id, category: s.category, prompts: { seed: s.seedPrompt, probe: s.probePrompt } })),
+        scenarios: scenarios.map((s) => ({
+          id: s.id,
+          category: s.category,
+          provenance: s.provenance ?? "synthetic",
+          prompts: { seed: s.seedPrompt, probe: s.probePrompt },
+        })),
         // Raw records, not just the table: docs/evals.md promises the runs.
         results: records,
       },

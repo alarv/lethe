@@ -31,10 +31,18 @@ The release workflow refuses to publish a version with no section here.
 
 ### Fixed
 
+- **The agent eval stops before an unauthenticated run.** A fresh `CLAUDE_CONFIG_DIR` has no
+  login, so the first real attempt failed 24 sessions with `exit 1` and no message. It now
+  checks for `ANTHROPIC_API_KEY` up front and says to run `claude setup-token`.
 - **The eval harness no longer hands the answer to the agent.** Eval-only variables,
   including `LETHE_EVAL_ANSWER`, were set for every session, so a real probe could read its
   own answer out of the environment. They are now passed to the mock agent and to command
   checks only.
+- **Two synthetic agent scenarios and a fresh-checkout probe.** `staging-host` and
+  `api-base` vary only in wording, so they cannot be mistaken for a real distribution; they
+  are marked `provenance: synthetic`. The probe now starts from a clean copy of the fixture
+  and keeps only the memory stores, so a seed session that writes the fact into the repo
+  cannot leak it into the probe.
 - **The eval harness refuses a scenario that leaks its own answer.** A pair declares the
   literals the probe must not find in `repoMustNotContain`; if one is in the fixture or the
   probe prompt, the run stops before spending a model. The summary also breaks results down
