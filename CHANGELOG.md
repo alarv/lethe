@@ -24,8 +24,8 @@ The release workflow refuses to publish a version with no section here.
 - **A test that the release manifests agree.** `package.json`, `server.json`,
   `.claude-plugin/plugin.json` and the marketplace each carry part of a release, and
   nothing checked that they agreed until a directory reviewer did.
-- **The README shows the plugin install route.** The plugin shipped in 0.4.1 but the
-  install section only offered `claude mcp add`, so the easier path was invisible.
+- **The README and site show the plugin install route.** The plugin shipped in 0.4.1 but
+  both install sections only offered `claude mcp add`, so the easier path was invisible.
 
 ### Fixed
 
