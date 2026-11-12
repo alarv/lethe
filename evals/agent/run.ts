@@ -20,9 +20,11 @@
  *   npm run eval:agent -- --agent=mock                   # plumbing check, no model
  *   npm run eval:agent -- --repeats=5 --conditions=auto,lethe
  *
- * It needs a model. Set ANTHROPIC_API_KEY for the run: CLAUDE_CONFIG_DIR is
- * isolated, so Claude Code cannot use the operator's OAuth login. Nothing here
- * reads, stores or prints credentials.
+ * It needs a model. CLAUDE_CONFIG_DIR isolates settings and auto memory, but
+ * Claude Code may still use whatever account the machine is logged in with, so
+ * set ANTHROPIC_API_KEY to pin the run to a specific account. Nothing here
+ * reads, stores or prints credentials. A published run must name the Claude
+ * Code version and model that produced it.
  *
  * The only shipped scenario is `smoke`, which exists to prove the harness runs
  * end to end. It is not evidence for the thesis and its numbers must not be
@@ -73,6 +75,12 @@ interface Scenario {
   /** The later task. Deliberately worded unlike the seed. */
   probePrompt: string;
   checks: Check[];
+  /**
+   * Environment passed only to command checks, never to the agent. Lets a check
+   * assert on a value without putting it in the sandbox repo where the probe
+   * could read it.
+   */
+  checkEnv?: Record<string, string>;
   /**
    * Only the mock reads this. A real scenario's answer is whatever its checks
    * verify, not a string a scenario hands the agent.
@@ -153,20 +161,24 @@ function sandboxFor(scenario: Scenario): Sandbox {
   return { base, repo, home, config };
 }
 
-function envFor(s: Sandbox, scenario: Scenario, condition: Condition, phase: Phase): NodeJS.ProcessEnv {
+function envFor(agent: Agent, s: Sandbox, scenario: Scenario, condition: Condition, phase: Phase): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     LETHE_HOME: s.home,
     CLAUDE_CONFIG_DIR: s.config,
     LETHE_TELEMETRY: "0",
     DO_NOT_TRACK: "1",
-    LETHE_EVAL_PHASE: phase,
-    LETHE_EVAL_CONDITION: condition,
-    LETHE_EVAL_MCP: condition === "lethe" || condition === "both" ? "1" : "0",
-    LETHE_EVAL_SCENARIO: join(scenariosDir, scenario.id),
-    LETHE_EVAL_ANSWER: scenario.seedAnswer ?? "",
-    LETHE_CLI: distCli,
   };
+  // The mock needs the answer to act. A real agent must never see it, or the
+  // probe can read the answer out of its own environment and the run is void.
+  if (agent === "mock") {
+    env.LETHE_EVAL_PHASE = phase;
+    env.LETHE_EVAL_CONDITION = condition;
+    env.LETHE_EVAL_MCP = condition === "lethe" || condition === "both" ? "1" : "0";
+    env.LETHE_EVAL_SCENARIO = join(scenariosDir, scenario.id);
+    env.LETHE_EVAL_ANSWER = scenario.seedAnswer ?? "";
+    env.LETHE_CLI = distCli;
+  }
   if (condition === "lethe" || condition === "cold") env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
   else delete env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
   return env;
@@ -199,9 +211,16 @@ const ALLOWED = [
   "mcp__lethe__learn",
 ].join(",");
 
-function argvFor(agent: Agent, prompt: string, condition: Condition, s: Sandbox, budget: string): string[] {
+function argvFor(
+  agent: Agent,
+  prompt: string,
+  condition: Condition,
+  s: Sandbox,
+  budget: string,
+  model: string,
+): string[] {
   if (agent === "mock") return [join(here, "mock-agent.mjs"), prompt];
-  return [
+  const argv = [
     "-p",
     prompt,
     "--output-format",
@@ -218,6 +237,14 @@ function argvFor(agent: Agent, prompt: string, condition: Condition, s: Sandbox,
     "--max-budget-usd",
     budget,
   ];
+  if (model) argv.push("--model", model);
+  return argv;
+}
+
+/** The version is part of the result: a run is only comparable to the same build. */
+function claudeVersion(): string | null {
+  const r = spawnSync("claude", ["--version"], { encoding: "utf8" });
+  return r.status === 0 ? (r.stdout ?? "").trim() || null : null;
 }
 
 /** Claude Code's stream-json ends with one `result` event carrying the totals. */
@@ -256,10 +283,11 @@ function runSession(
   phase: Phase,
   timeoutMs: number,
   budget: string,
+  model: string,
 ): { session?: Session; error?: string } {
-  const r = spawnSync(agent === "mock" ? process.execPath : "claude", argvFor(agent, prompt, condition, s, budget), {
+  const r = spawnSync(agent === "mock" ? process.execPath : "claude", argvFor(agent, prompt, condition, s, budget, model), {
     cwd: s.repo,
-    env: envFor(s, scenario, condition, phase),
+    env: envFor(agent, s, scenario, condition, phase),
     encoding: "utf8",
     timeout: timeoutMs,
     maxBuffer: 64 * 1024 * 1024,
@@ -292,7 +320,12 @@ function grade(scenario: Scenario, s: Sandbox, env: NodeJS.ProcessEnv): CheckRes
     }
     const [cmd, ...args] = check.command;
     if (!cmd) return { name: "command", ok: false, detail: "empty command" };
-    const r = spawnSync(cmd, args, { cwd: s.repo, env, encoding: "utf8", timeout: 120_000 });
+    const r = spawnSync(cmd, args, {
+      cwd: s.repo,
+      env: { ...env, ...scenario.checkEnv },
+      encoding: "utf8",
+      timeout: 120_000,
+    });
     const want = check.expectExit ?? 0;
     const ok = (r.status ?? -1) === want;
     return {
@@ -347,8 +380,10 @@ async function main(): Promise<void> {
   const repeats = intArg("repeats", 5);
   const timeoutMs = intArg("timeout-ms", 600_000);
   const budget = arg("budget", "1.00");
+  const model = arg("model", "");
   const keep = process.argv.includes("--keep");
   const scenarios = loadScenarios();
+  const version = agent === "claude" ? claudeVersion() : null;
 
   if (!existsSync(distCli)) throw new Error("dist/cli.js is missing: run `npm run build` first");
 
@@ -357,6 +392,12 @@ async function main(): Promise<void> {
       `repeats, agent=${agent}`,
   );
   if (agent === "mock") console.log("mock agent: this checks the harness, not the thesis.");
+  if (agent === "claude") {
+    console.log(`claude ${version ?? "(version unknown)"}${model ? `, model ${model}` : ", account default model"}`);
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.log("no ANTHROPIC_API_KEY: this run uses whichever account the machine is logged in with.");
+    }
+  }
   console.log("auto memory, lethe and the operator's settings are isolated per run.");
 
   const records: Run[] = [];
@@ -366,15 +407,15 @@ async function main(): Promise<void> {
         const s = sandboxFor(scenario);
         const record: Run = { scenario: scenario.id, condition, repeat, solved: false, checks: [] };
         try {
-          const seed = runSession(agent, scenario.seedPrompt, condition, scenario, s, "seed", timeoutMs, budget);
+          const seed = runSession(agent, scenario.seedPrompt, condition, scenario, s, "seed", timeoutMs, budget, model);
           record.seed = seed.session;
           if (seed.error) record.error = seed.error;
           else {
-            const probe = runSession(agent, scenario.probePrompt, condition, scenario, s, "probe", timeoutMs, budget);
+            const probe = runSession(agent, scenario.probePrompt, condition, scenario, s, "probe", timeoutMs, budget, model);
             record.probe = probe.session;
             if (probe.error) record.error = probe.error;
             else {
-              record.checks = grade(scenario, s, envFor(s, scenario, condition, "probe"));
+              record.checks = grade(scenario, s, envFor(agent, s, scenario, condition, "probe"));
               record.solved = record.checks.every((c) => c.ok);
             }
           }
@@ -400,8 +441,11 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         agent,
+        claudeVersion: version,
+        model: model || null,
         conditions,
         repeats,
+        startedAt: stamp,
         scenarios: scenarios.map((s) => ({ id: s.id, category: s.category, prompts: { seed: s.seedPrompt, probe: s.probePrompt } })),
         // Raw records, not just the table: docs/evals.md promises the runs.
         results: records,

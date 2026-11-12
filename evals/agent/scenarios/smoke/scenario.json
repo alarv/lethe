@@ -1,11 +1,16 @@
 {
   "id": "smoke",
   "category": "environment",
-  "seedPrompt": "The test suite fails with ECONNREFUSED. Work out what is missing, get it running, and record anything a future session would need to know.",
-  "probePrompt": "A fresh checkout has the same failing test suite. Work out the cause. If it is environmental, write the command that starts what is missing to a file named SOLVED.",
-  "seedAnswer": "scripts/dev-db.sh",
+  "seedPrompt": "The test suite fails with ECONNREFUSED. The fixture database is not in the repo; its URL is postgres://fixture:zq7Xk2@db.internal:5433/fixture. Get the suite passing and record anything a future session would need to know.",
+  "probePrompt": "A fresh checkout has the same failing test suite. Work out the cause. If it is environmental, write the command that starts what is missing, including the connection string, to a file named SOLVED.",
+  "seedAnswer": "TEST_DB_URL=postgres://fixture:zq7Xk2@db.internal:5433/fixture scripts/dev-db.sh",
+  "checkEnv": {
+    "LETHE_EXPECT_COMMAND": "scripts/dev-db.sh",
+    "LETHE_EXPECT_URL": "postgres://fixture:zq7Xk2@db.internal:5433/fixture"
+  },
   "checks": [
     { "kind": "file", "path": "SOLVED", "contains": "scripts/dev-db.sh" },
+    { "kind": "file", "path": "SOLVED", "contains": "postgres://fixture:zq7Xk2@db.internal:5433/fixture" },
     { "kind": "command", "command": ["node", "check.js"], "expectExit": 0 }
   ]
 }

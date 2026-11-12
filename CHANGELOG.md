@@ -19,8 +19,10 @@ The release workflow refuses to publish a version with no section here.
   three launch conditions (`auto`, `lethe`, `both`) plus a `cold` harness check. Each run
   gets its own sandbox repo, `LETHE_HOME` and `CLAUDE_CONFIG_DIR`, so it cannot read the
   operator's memory or settings. The smoke scenario grades with a file assertion and a
-  command exit, so both assertion paths a real scenario needs are exercised. Built and
-  mock-verified; it has not been run against a model, and `docs/evals.md` says so.
+  command exit, so both assertion paths a real scenario needs are exercised. The summary
+  records the Claude Code version and model (`--model=`) because a run is only comparable
+  to the same build. Mock-verified; a real-model run is not evidence until real scenarios
+  exist, and `docs/evals.md` says so.
 - **A test that the release manifests agree.** `package.json`, `server.json`,
   `.claude-plugin/plugin.json` and the marketplace each carry part of a release, and
   nothing checked that they agreed until a directory reviewer did.
@@ -29,6 +31,14 @@ The release workflow refuses to publish a version with no section here.
 
 ### Fixed
 
+- **The eval harness no longer hands the answer to the agent.** Eval-only variables,
+  including `LETHE_EVAL_ANSWER`, were set for every session, so a real probe could read its
+  own answer out of the environment. They are now passed to the mock agent and to command
+  checks only.
+- **The smoke scenario can no longer be solved without memory.** Its answer was the only
+  script in the fixture, so `cold` found it and the first real run measured nothing. The
+  fixture now carries a connection string that appears nowhere in the sandbox repo, the
+  prompt, or the agent's environment.
 - **The Claude Code plugin manifests now validate.** `claude plugin validate` failed on
   both: `plugin.json` launched `@latest` (blocked by Anthropic's directory validation) and
   carried a `displayName` key the schema rejects; `marketplace.json` had a root

@@ -254,16 +254,22 @@ defined before there was a harness.
 | `cold` | off | off — harness check only, not a product comparison |
 
 `cold` exists to make the harness fail loudly when it should: a run with no memory that
-solves the task means the isolation or the grading is broken. It is not one of the launch
-conditions and its numbers are not a claim about lethe.
+solves the task means the grading is broken, the isolation leaked, or **the answer was
+discoverable in the sandbox** — and a discoverable answer makes the scenario void. It is not
+one of the launch conditions and its numbers are not a claim about lethe.
 
 ### Isolation
 
 Each run gets its own sandbox repository, its own `LETHE_HOME` and its own
 `CLAUDE_CONFIG_DIR`. That is what keeps a run from seeing the previous one, touching the
 operator's `~/.lethe`, or inheriting their auto memory and settings. Telemetry is off for
-every process the harness starts. Credentials are never read, written or printed; because
-`CLAUDE_CONFIG_DIR` is isolated, a real run needs `ANTHROPIC_API_KEY` in the environment.
+every process the harness starts. Credentials are never read, written or printed.
+
+`CLAUDE_CONFIG_DIR` isolates settings and auto memory, but Claude Code may still use the
+account the machine is logged in with (OAuth or the macOS keychain) even when that directory
+is changed. Set `ANTHROPIC_API_KEY` to pin a run to a specific account. A published run
+records the Claude Code version and model, because a result is only meaningful for the
+account and model that produced it.
 
 ### Grading and artefacts
 
@@ -280,9 +286,12 @@ carries memory between the two sessions, isolates them, and grades a failure. It
 are invented by a mock agent and **must never be published as a result**. What is still
 needed:
 
-- real scenarios whose checks run the project's own tests, not a marker file;
+- real scenarios whose checks run the project's own tests, not a marker file. The fact the
+  seed session learns must not be in the sandbox repository, the prompts, or the agent's
+  environment: if it is, `cold` can find it and the probe measures discovery, not memory.
+  Eval-only variables are passed to the mock agent and to command checks, never to the real
+  agent;
 - 30–50 (seed, probe) pairs harvested from real sessions, per the method above;
-- a model and date recorded with every published run;
 - the runs themselves, including the ones where lethe loses.
 
 Until then the retrieval tables above are the only measurements, and they do not support
