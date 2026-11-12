@@ -289,8 +289,9 @@ needed:
 - real scenarios whose checks run the project's own tests, not a marker file. The fact the
   seed session learns must not be in the sandbox repository, the prompts, or the agent's
   environment: if it is, `cold` can find it and the probe measures discovery, not memory.
-  Eval-only variables are passed to the mock agent and to command checks, never to the real
-  agent;
+  A scenario declares those literals in `repoMustNotContain`, and the harness refuses to
+  start if one appears in the fixture or the probe prompt. Eval-only variables are passed
+  to the mock agent and to command checks, never to the real agent;
 - 30–50 (seed, probe) pairs harvested from real sessions, per the method above;
 - the runs themselves, including the ones where lethe loses.
 

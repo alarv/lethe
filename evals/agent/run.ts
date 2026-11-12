@@ -41,6 +41,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -75,6 +76,12 @@ interface Scenario {
   /** The later task. Deliberately worded unlike the seed. */
   probePrompt: string;
   checks: Check[];
+  /**
+   * Literals the probe must not be able to find: checked against every file in
+   * the sandbox repo and against the probe prompt before a run starts. A pair
+   * that leaks its answer produces a valid-looking run that measures nothing.
+   */
+  repoMustNotContain?: string[];
   /**
    * Environment passed only to command checks, never to the agent. Lets a check
    * assert on a value without putting it in the sandbox repo where the probe
@@ -136,15 +143,38 @@ function loadScenarios(): Scenario[] {
   const ids = wanted
     ? wanted.split(",")
     : readdirSync(scenariosDir, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
+        .filter((d) => d.isDirectory() && !d.name.startsWith("_"))
         .map((d) => d.name)
         .sort();
   return ids.map((id) => {
     const file = join(scenariosDir, id, "scenario.json");
     const scenario = JSON.parse(readFileSync(file, "utf8")) as Scenario;
     if (scenario.id !== id) throw new Error(`${file}: id is "${scenario.id}", directory is "${id}"`);
+    assertNoLeak(scenario);
     return scenario;
   });
+}
+
+/**
+ * A scenario whose answer is in the prompt or the fixture cannot distinguish
+ * memory from search. Fail before spending a model, not after.
+ */
+function assertNoLeak(scenario: Scenario): void {
+  const literals = scenario.repoMustNotContain ?? [];
+  const probe = scenario.probePrompt.toLowerCase();
+  for (const literal of literals) {
+    if (probe.includes(literal.toLowerCase())) {
+      throw new Error(`${scenario.id}: repoMustNotContain "${literal}" appears in the probe prompt`);
+    }
+    const repo = join(scenariosDir, scenario.id, "repo");
+    for (const entry of readdirSync(repo, { recursive: true, encoding: "utf8" })) {
+      const file = join(repo, entry);
+      if (!statSync(file).isFile()) continue;
+      if (readFileSync(file, "utf8").includes(literal)) {
+        throw new Error(`${scenario.id}: answer "${literal}" is in the sandbox repo at ${entry}`);
+      }
+    }
+  }
 }
 
 function sandboxFor(scenario: Scenario): Sandbox {
@@ -368,6 +398,26 @@ function summarise(records: Run[]): void {
   }
   console.log("\n  seed is the cost of acquiring the memory; probe is the cost of using it.");
   console.log("  Solved is assertion-based. Every run, including failures, is in runs.jsonl.");
+  const total = records.reduce((sum, r) => sum + (r.seed?.costUsd ?? 0) + (r.probe?.costUsd ?? 0), 0);
+  console.log(`  total reported cost: $${total.toFixed(2)} for ${records.length * 2} sessions.`);
+
+  // With a handful of pairs, medians across all of them hide a scenario that
+  // always wins or always loses. Show each one.
+  if (new Set(records.map((r) => r.scenario)).size > 1) {
+    const present = CONDITIONS.filter((c) => records.some((r) => r.condition === c));
+    console.log("\nper scenario (solved% / median probe turns)");
+    console.log(`  ${"scenario".padEnd(24)}${present.map((c) => c.padStart(12)).join("")}`);
+    for (const id of [...new Set(records.map((r) => r.scenario))]) {
+      const cells = present.map((condition) => {
+        const runs = records.filter((r) => r.scenario === id && r.condition === condition);
+        if (!runs.length) return "—".padStart(12);
+        const solved = runs.filter((r) => r.solved).length;
+        const turns = median(runs.flatMap((r) => (r.probe ? [r.probe.turns] : [])));
+        return `${pct(solved / runs.length)} / ${turns.toFixed(1)}`.padStart(12);
+      });
+      console.log(`  ${id.padEnd(24)}${cells.join("")}`);
+    }
+  }
 }
 
 async function main(): Promise<void> {

@@ -35,6 +35,11 @@ The release workflow refuses to publish a version with no section here.
   including `LETHE_EVAL_ANSWER`, were set for every session, so a real probe could read its
   own answer out of the environment. They are now passed to the mock agent and to command
   checks only.
+- **The eval harness refuses a scenario that leaks its own answer.** A pair declares the
+  literals the probe must not find in `repoMustNotContain`; if one is in the fixture or the
+  probe prompt, the run stops before spending a model. The summary also breaks results down
+  per scenario and reports total reported cost, because medians across a handful of pairs
+  hide the one that always wins or always loses.
 - **The smoke scenario can no longer be solved without memory.** Its answer was the only
   script in the fixture, so `cold` found it and the first real run measured nothing. The
   fixture now carries a connection string that appears nowhere in the sandbox repo, the

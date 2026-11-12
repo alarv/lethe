@@ -1,0 +1,15 @@
+{
+  "id": "template",
+  "category": "environment",
+  "seedPrompt": "The first task. State the fact the user tells the agent here, in the words a user would use.",
+  "probePrompt": "The later task, worded differently. It must not repeat the fact, and it must be impossible without it.",
+  "seedAnswer": "what a correct result contains (the mock agent reads this; nothing else does)",
+  "repoMustNotContain": ["the-fact-that-must-not-be-in-the-repo"],
+  "checkEnv": {
+    "LETHE_EXPECT_VALUE": "the-fact-that-must-not-be-in-the-repo"
+  },
+  "checks": [
+    { "kind": "file", "path": "SOLVED", "contains": "the-fact-that-must-not-be-in-the-repo" },
+    { "kind": "command", "command": ["node", "check.js"], "expectExit": 0 }
+  ]
+}

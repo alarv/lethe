@@ -17,6 +17,7 @@ One directory per scenario:
   "seedPrompt": "the first task; tells the agent the thing it must remember",
   "probePrompt": "the later task, worded differently",
   "seedAnswer": "what a correct result looks like; the mock agent reads this, nothing else does",
+  "repoMustNotContain": ["the value the probe must not be able to find"],
   "checkEnv": { "LETHE_EXPECT_URL": "..." },
   "checks": [
     { "kind": "file", "path": "SOLVED", "contains": "..." },
@@ -33,8 +34,15 @@ does, `cold` finds it, the run is void, and you have measured search rather than
 Run `npm run eval:agent -- --agent=mock` and confirm `cold` is 0% solved before spending a
 model.
 
+`repoMustNotContain` is checked against every file in the fixture and against the probe
+prompt before the run starts; the harness refuses to spend a model on a leaked pair. Every
+answer-shaped literal belongs there.
+
 `checkEnv` goes to command checks only, never to the agent. `seedAnswer` goes to the mock
 only. Neither is a place to hide an answer the agent will see.
+
+Start from `_template/`: copy it to `<id>/`, edit the id and prompts, and put the fixture
+in `repo/`. Directories whose name starts with `_` are never loaded.
 
 ## What makes a usable pair
 
