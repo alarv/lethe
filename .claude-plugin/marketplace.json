@@ -1,0 +1,12 @@
+{
+  "name": "lethe",
+  "description": "lethe: memory for coding agents that forgets on purpose",
+  "owner": { "name": "alarv", "url": "https://github.com/alarv" },
+  "plugins": [
+    {
+      "name": "lethe",
+      "source": "./",
+      "description": "Memory for coding agents that forgets on purpose. Distilled, reviewable markdown in your repo."
+    }
+  ]
+}

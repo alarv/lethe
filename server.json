@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.alarv/lethe",
+  "description": "Memory for coding agents that forgets on purpose. Distilled, reviewable markdown in your repo.",
+  "repository": { "url": "https://github.com/alarv/lethe", "source": "github" },
+  "version": "0.4.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@alarv/lethe",
+      "version": "0.4.1",
+      "runtimeHint": "npx",
+      "packageArguments": [{ "type": "positional", "value": "mcp" }],
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

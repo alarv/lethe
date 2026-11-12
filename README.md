@@ -35,7 +35,8 @@ better** — it distils what happened into what is true, and throws the rest awa
 </p>
 
 In practice your agent makes these calls itself over MCP; the CLI is the same memory,
-for when you want to look.
+for when you want to look. It works alongside Claude Code's built-in memory rather than
+replacing it — [how they differ](docs/claude-memory.md).
 
 ## Install
 

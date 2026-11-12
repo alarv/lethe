@@ -1,0 +1,153 @@
+<!doctype html>
+<!--
+  One page, no build step, no analytics, no external requests.
+  Deploy: `vercel` from this directory (or point Vercel's root at site/).
+
+  Before it goes live, replace SITE_URL below with the real address -- Open Graph
+  images must be absolute URLs. Everything else is relative.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lethe — memory for coding agents that forgets on purpose</title>
+<meta name="description" content="Your agent solved it on Tuesday; on Thursday it has no idea. lethe keeps what is true, drops the rest, and stores it as markdown in your repo. Works in any MCP host.">
+<link rel="canonical" href="SITE_URL/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="lethe — memory for coding agents that forgets on purpose">
+<meta property="og:description" content="Distilled, reviewable agent memory as markdown in your repo. Works in Claude Code, opencode, Cursor, Codex and any MCP host.">
+<meta property="og:image" content="SITE_URL/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { --bg:#0b0d10; --fg:#e6e8eb; --dim:#98a1ab; --line:#232830; --accent:#d6924a; --code:#12161b; }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); line-height:1.6;
+         font:17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:0 20px 80px; }
+  a { color:var(--accent); }
+  h1 { font-size:2.6rem; margin:0; letter-spacing:-.02em; }
+  h2 { font-size:1.35rem; margin:3rem 0 .6rem; }
+  p { margin:.6rem 0; }
+  .dim { color:var(--dim); }
+  header { text-align:center; padding:48px 0 24px; }
+  header img { width:240px; max-width:60%; height:auto; mix-blend-mode:screen; }
+  .tag { font-size:1.2rem; color:var(--dim); margin-top:.4rem; }
+  .cta { display:inline-block; margin:1.2rem .3rem 0; padding:.55rem 1.1rem; border-radius:6px;
+         border:1px solid var(--accent); text-decoration:none; color:var(--fg); }
+  .cta.primary { background:var(--accent); color:#0b0d10; font-weight:600; }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:6px; padding:12px 14px;
+        overflow-x:auto; font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:.92em; }
+  .demo { width:100%; height:auto; border:1px solid var(--line); border-radius:8px; margin-top:1rem; }
+  details { border:1px solid var(--line); border-radius:6px; padding:.5rem 1rem; margin:.5rem 0; }
+  summary { cursor:pointer; font-weight:600; }
+  table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.95rem; }
+  th, td { text-align:left; padding:.45rem .6rem; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:600; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-top:1rem; }
+  .card { border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .card b { color:var(--accent); font-family:ui-monospace,Menlo,monospace; }
+  footer { border-top:1px solid var(--line); margin-top:3rem; padding-top:1rem; color:var(--dim); font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <img src="seahorse.jpg" alt="" width="240" height="240">
+  <h1>lethe</h1>
+  <p class="tag">Memory for coding agents that forgets on purpose.</p>
+  <a class="cta primary" href="#install">Install</a>
+  <a class="cta" href="https://github.com/alarv/lethe">GitHub</a>
+</header>
+
+<p>Your agent solved it on Tuesday. On Thursday, in a new session, it has no idea.</p>
+<p>Every memory tool answers that by storing more. lethe stores <b>less, better</b>: it distils
+what happened into what is true, and throws the rest away.</p>
+
+<img class="demo" src="demo.gif" alt="lethe note on Tuesday, lethe recall from a fresh session on Thursday, the answer comes back" width="760">
+
+<h2 id="install">Install</h2>
+<p>One line in Claude Code. Works in any host that speaks MCP.</p>
+<pre>claude mcp add lethe --scope user -- npx -y @alarv/lethe@latest mcp</pre>
+<p class="dim">Then check it: <code>npx @alarv/lethe@latest doctor</code>. Needs Node 22+.</p>
+
+<details>
+  <summary>opencode</summary>
+  <pre>{
+  "mcp": {
+    "lethe": {
+      "type": "local",
+      "command": ["npx", "-y", "@alarv/lethe@latest", "mcp"],
+      "enabled": true
+    }
+  }
+}</pre>
+</details>
+<details>
+  <summary>Cursor · Windsurf · Zed</summary>
+  <pre>{
+  "mcpServers": {
+    "lethe": { "command": "npx", "args": ["-y", "@alarv/lethe@latest", "mcp"] }
+  }
+}</pre>
+</details>
+<details>
+  <summary>Codex CLI</summary>
+  <pre>[mcp_servers.lethe]
+command = "npx"
+args = ["-y", "@alarv/lethe@latest", "mcp"]</pre>
+</details>
+
+<h2>Three kinds of memory</h2>
+<div class="cards">
+  <div class="card"><b>episode</b><br>What happened. Raw, verbose, never leaves your machine.</div>
+  <div class="card"><b>claim</b><br>What is true. Distilled from episodes, shareable.</div>
+  <div class="card"><b>pattern</b><br>How we do things here. Promoted once a claim has earned it.</div>
+</div>
+<p>And three things happen to them: <b>consolidation</b> distils episodes into claims off the
+latency path, <b>forgetting</b> decays and evicts the weakest first, and
+<b>reconsolidation</b> corrects a memory that turns out to be wrong.</p>
+
+<h2>Memory is text, in your repo</h2>
+<pre>.lethe/memory/
+  a1b2c3d4-tests-need-containers.md
+  e5f6a7b8-async-state-is-a-race.md</pre>
+<p>Readable, diffable, reviewable in a pull request. Your team sees what the agent learned
+before it becomes shared knowledge. If you delete lethe tomorrow, you keep the markdown.</p>
+
+<h2>Is it any good?</h2>
+<p>Honest answer: it is early. Retrieval is keyword search (BM25), and on our 24-task set it
+is roughly a draw against raw session logs. The evals are public and report where lethe loses.</p>
+<table>
+  <tr><th>retrieval</th><th>raw MRR</th><th>compact MRR</th><th>precision</th></tr>
+  <tr><td>fts5</td><td>0.88</td><td>0.91</td><td>29%</td></tr>
+  <tr><td>recall (what the tool returns)</td><td>0.88</td><td>0.86</td><td>67%</td></tr>
+</table>
+<p class="dim">Retrieval quality only, 24 tasks, 2026-10-22. The claim that matters — fewer turns and
+tokens on repeated tasks — is not yet measured.
+<a href="https://github.com/alarv/lethe/blob/main/docs/evals.md">Full evals</a>.</p>
+
+<h2>Isn't this what Claude Code's memory does?</h2>
+<p>Partly. Claude's auto memory is a notebook one person keeps on one machine, always loaded,
+zero setup. lethe is shared, reviewable, forgets, and works in any MCP host. They coexist.
+<a href="https://github.com/alarv/lethe/blob/main/docs/claude-memory.md">The comparison</a>,
+including where Claude's is better.</p>
+
+<h2>Why a seahorse</h2>
+<p>Named for the river of forgetting. The seahorse is the hippocampus, where episodic memory
+is written before it is either consolidated or lost. Forgetting the incidental is the same
+operation as extracting the general rule.
+<a href="https://github.com/alarv/lethe/blob/main/docs/brain.md">The full account</a>.</p>
+
+<footer>
+  Apache-2.0 · <a href="https://github.com/alarv/lethe">github.com/alarv/lethe</a> ·
+  <a href="https://www.npmjs.com/package/@alarv/lethe">npm</a> ·
+  anonymous daily usage counts are on by default; <code>lethe telemetry off</code> or
+  <code>DO_NOT_TRACK=1</code> turns them off.
+</footer>
+
+</main>
+</body>
+</html>

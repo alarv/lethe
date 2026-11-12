@@ -1,0 +1,17 @@
+{
+  "name": "lethe",
+  "displayName": "lethe",
+  "version": "0.4.1",
+  "description": "Memory for coding agents that forgets on purpose. Distilled, reviewable markdown in your repo.",
+  "author": { "name": "alarv" },
+  "homepage": "https://github.com/alarv/lethe#readme",
+  "repository": "https://github.com/alarv/lethe",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "mcp", "agent", "consolidation"],
+  "mcpServers": {
+    "lethe": {
+      "command": "npx",
+      "args": ["-y", "@alarv/lethe@latest", "mcp"]
+    }
+  }
+}

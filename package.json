@@ -1,6 +1,7 @@
 {
   "name": "@alarv/lethe",
-  "version": "0.4.0",
+  "version": "0.4.1",
+  "mcpName": "io.github.alarv/lethe",
   "description": "A memory harness for coding agents that forgets on purpose.",
   "keywords": [
     "memory",

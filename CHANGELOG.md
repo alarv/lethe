@@ -11,8 +11,17 @@ The release workflow refuses to publish a version with no section here.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-12
+
 ### Added
 
+- **Installable as a Claude Code plugin, and listable in the MCP Registry.**
+  `.claude-plugin/` makes this repo its own marketplace (`/plugin marketplace add
+  alarv/lethe`, then `/plugin install lethe@lethe`), running the same `npx -y
+  @alarv/lethe@latest mcp` as the README. `package.json` gains `mcpName` and `server.json`
+  describes the npm package for registry.modelcontextprotocol.io. The MCP server is
+  declared inside `plugin.json` rather than a root `.mcp.json`, which would also load as a
+  project server for anyone opening this repo.
 - **`docs/claude-memory.md`: how lethe differs from Claude Code's built-in memory.** The
   question every Claude Code user asks first, and the README had no answer. It says where
   Claude's auto memory is better (no setup, always in context), where lethe differs
