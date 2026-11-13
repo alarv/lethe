@@ -208,13 +208,28 @@ function copyFixture(scenario: Scenario, repo: string): void {
  */
 function resetRepo(s: Sandbox, scenario: Scenario, condition: Condition): void {
   const keep = join(s.base, "repo-lethe-keep");
-  const keepMemory = condition === "lethe" || condition === "both";
+  const keepMemory = usesLethe(condition);
   const hasMemory = keepMemory && existsSync(join(s.repo, ".lethe"));
   if (hasMemory) cpSync(join(s.repo, ".lethe"), keep, { recursive: true });
   rmSync(s.repo, { recursive: true, force: true });
   copyFixture(scenario, s.repo);
   if (hasMemory) cpSync(keep, join(s.repo, ".lethe"), { recursive: true });
   rmSync(keep, { recursive: true, force: true });
+}
+
+/**
+ * `home` is LETHE_HOME. A condition with lethe off that still wrote there did not
+ * get the baseline it claims to be, so the run is void rather than merely slow.
+ */
+function assertNoLetheStore(s: Sandbox): void {
+  const projects = join(s.home, "projects");
+  if (!existsSync(projects)) return;
+  const written = readdirSync(projects);
+  if (written.length) throw new Error(`lethe store written while lethe was off: ${written.join(", ")}`);
+}
+
+function usesLethe(condition: Condition): boolean {
+  return condition === "lethe" || condition === "both";
 }
 
 function envFor(agent: Agent, s: Sandbox, scenario: Scenario, condition: Condition, phase: Phase): NodeJS.ProcessEnv {
@@ -230,7 +245,7 @@ function envFor(agent: Agent, s: Sandbox, scenario: Scenario, condition: Conditi
   if (agent === "mock") {
     env.LETHE_EVAL_PHASE = phase;
     env.LETHE_EVAL_CONDITION = condition;
-    env.LETHE_EVAL_MCP = condition === "lethe" || condition === "both" ? "1" : "0";
+    env.LETHE_EVAL_MCP = usesLethe(condition) ? "1" : "0";
     env.LETHE_EVAL_SCENARIO = join(scenariosDir, scenario.id);
     env.LETHE_EVAL_ANSWER = scenario.seedAnswer ?? "";
     env.LETHE_CLI = distCli;
@@ -289,7 +304,7 @@ function argvFor(
     ALLOWED,
     "--strict-mcp-config",
     "--mcp-config",
-    condition === "auto" ? JSON.stringify({ mcpServers: {} }) : mcpConfig(s),
+    usesLethe(condition) ? mcpConfig(s) : JSON.stringify({ mcpServers: {} }),
     "--max-budget-usd",
     budget,
   ];
@@ -501,6 +516,7 @@ async function main(): Promise<void> {
             record.probe = probe.session;
             if (probe.error) record.error = probe.error;
             else {
+              if (!usesLethe(condition)) assertNoLetheStore(s);
               record.checks = grade(scenario, s, envFor(agent, s, scenario, condition, "probe"));
               record.solved = record.checks.every((c) => c.ok);
             }

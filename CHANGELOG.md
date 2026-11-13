@@ -34,6 +34,15 @@ The release workflow refuses to publish a version with no section here.
 - **The agent eval stops before an unauthenticated run.** A fresh `CLAUDE_CONFIG_DIR` has no
   login, so the first real attempt failed 24 sessions with `exit 1` and no message. It now
   checks for `ANTHROPIC_API_KEY` up front and says to run `claude setup-token`.
+- **`cold` actually ran without lethe.** Only `auto` got an empty MCP config; `cold` was
+  handed the lethe server too, so the baseline could recall the seed's note and the first
+  real run showed 2/3 cold scenarios solved. The MCP config and the mock's
+  `LETHE_EVAL_MCP` now come from one `usesLethe(condition)`, and a `cold`/`auto` run that
+  writes to `LETHE_HOME` is void. A cold run now fails as it must.
+- **The smoke fixture no longer contains a password.** Its URL was
+  `postgres://fixture:zq7Xk2@...`; lethe correctly refuses to record secrets, so the one
+  condition that depends on `note` could never store it. The URL now has a user but no
+  credential.
 - **The eval harness no longer hands the answer to the agent.** Eval-only variables,
   including `LETHE_EVAL_ANSWER`, were set for every session, so a real probe could read its
   own answer out of the environment. They are now passed to the mock agent and to command
