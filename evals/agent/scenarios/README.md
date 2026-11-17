@@ -109,8 +109,9 @@ records the Claude Code version and model in `summary.json` and writes raw runs 
 ## A run that errored is not a result
 
 Errors are counted separately and the summary is marked **VOID** if any run errored; the
-command exits 1. `Credit balance is too low` and a rejected or missing key abort the whole
-run after the failing session instead of producing 50 more identical errors. Partial
+command exits 1. `Credit balance is too low`, a rejected or missing key, and a subscription's
+5-hour or weekly limit abort the whole run after the failing session instead of producing
+50 more identical errors. Partial
 results are still written to `runs.jsonl`, but they are not evidence. A `!` in the
 per-scenario table means that cell contains errored runs. `--total-budget=<usd>` stops an
 unattended run once the reported cost crosses that number, which is the only protection

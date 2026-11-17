@@ -42,7 +42,7 @@ The release workflow refuses to publish a version with no section here.
 - **An errored agent-eval run can no longer look like a result.** Errors get their own
   column, the summary prints **VOID** and exits 1, and a credit or auth failure aborts the
   run after the session that hit it instead of repeating the same error for every remaining
-  session. `--total-budget` stops an unattended run at a chosen spend. The failure message
+  session; a subscription's 5-hour or weekly limit does the same. `--total-budget` stops an unattended run at a chosen spend. The failure message
   keeps the tail of stdout as well as stderr, because the CLI sometimes explains itself
   only on stdout. `--validate` checks every pair and its leak
   guard without a model, and a `harvested` pair must name its source in

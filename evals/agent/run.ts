@@ -393,6 +393,7 @@ const FATAL: [RegExp, string][] = [
   [/credit balance is too low/i, "API credit is exhausted"],
   [/invalid x-api-key|invalid api key|"api_error_status":401/i, "the API key was rejected"],
   [/not logged in/i, "the session is not authenticated"],
+  [/(5-hour|weekly|usage) limit|limit reached|hit your .*limit/i, "the subscription usage limit was reached"],
 ];
 
 function fatalFrom(text: string): string | null {
@@ -680,6 +681,8 @@ async function main(): Promise<void> {
     } else if (/denied/.test(aborted)) {
       console.log("  Managed settings with allowManagedPermissionRulesOnly ignore --allowedTools, so an");
       console.log("  unattended session cannot use them. Run the eval where that policy does not apply.");
+    } else if (/limit/i.test(aborted)) {
+      console.log("  Wait for the 5-hour or weekly reset, or switch to API credit, then retry.");
     } else {
       console.log("  Partial results are saved; raise --total-budget to finish the run.");
     }
