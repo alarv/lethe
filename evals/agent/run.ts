@@ -76,6 +76,11 @@ interface Scenario {
    * harvested pairs can support a claim about real work.
    */
   provenance?: "harvested" | "synthetic";
+  /**
+   * Required for `harvested`: when and where the pair came from, so a reviewer
+   * can ask for the session instead of taking the label on trust.
+   */
+  harvestedFrom?: { date: string; session: string; redactions?: string[] };
   /** What the seed session is asked to do. Discovers the thing worth keeping. */
   seedPrompt: string;
   /** The later task. Deliberately worded unlike the seed. */
@@ -155,9 +160,37 @@ function loadScenarios(): Scenario[] {
     const file = join(scenariosDir, id, "scenario.json");
     const scenario = JSON.parse(readFileSync(file, "utf8")) as Scenario;
     if (scenario.id !== id) throw new Error(`${file}: id is "${scenario.id}", directory is "${id}"`);
+    assertValid(scenario, file);
     assertNoLeak(scenario);
     return scenario;
   });
+}
+
+/**
+ * A label is not evidence. `harvested` is the only provenance that can support
+ * a claim about real work, so it must say where the pair came from.
+ */
+function assertValid(scenario: Scenario, file: string): void {
+  const provenance = scenario.provenance ?? "synthetic";
+  if (provenance !== "harvested" && provenance !== "synthetic") {
+    throw new Error(`${file}: provenance must be "harvested" or "synthetic"`);
+  }
+  for (const field of ["id", "category", "seedPrompt", "probePrompt"] as const) {
+    if (typeof scenario[field] !== "string" || !scenario[field]!.trim()) {
+      throw new Error(`${file}: ${field} must be a non-empty string`);
+    }
+  }
+  if (!Array.isArray(scenario.checks) || !scenario.checks.length) {
+    throw new Error(`${file}: at least one check is required`);
+  }
+  if (provenance === "harvested") {
+    if (!scenario.harvestedFrom?.date || !scenario.harvestedFrom?.session) {
+      throw new Error(`${file}: harvested pairs need harvestedFrom { date, session }`);
+    }
+    if (!scenario.repoMustNotContain?.length) {
+      throw new Error(`${file}: harvested pairs need repoMustNotContain, or the probe may just read the answer`);
+    }
+  }
 }
 
 /**
@@ -345,6 +378,21 @@ function parseSession(stdout: string): Session | null {
   };
 }
 
+/**
+ * These are not scenario failures: every later session will fail the same way,
+ * and continuing turns one billing problem into 50 rows of noise.
+ */
+const FATAL: [RegExp, string][] = [
+  [/credit balance is too low/i, "API credit is exhausted"],
+  [/invalid x-api-key/i, "the API key was rejected"],
+  [/not logged in/i, "the session is not authenticated"],
+];
+
+function fatalFrom(text: string): string | null {
+  for (const [pattern, reason] of FATAL) if (pattern.test(text)) return reason;
+  return null;
+}
+
 function runSession(
   agent: Agent,
   prompt: string,
@@ -355,7 +403,7 @@ function runSession(
   timeoutMs: number,
   budget: string,
   model: string,
-): { session?: Session; error?: string } {
+): { session?: Session; error?: string; fatal?: string } {
   const r = spawnSync(agent === "mock" ? process.execPath : "claude", argvFor(agent, prompt, condition, s, budget, model), {
     cwd: s.repo,
     env: envFor(agent, s, scenario, condition, phase),
@@ -364,14 +412,20 @@ function runSession(
     maxBuffer: 64 * 1024 * 1024,
   });
   if (r.error) return { error: `${phase}: ${r.error.message}` };
+  const output = `${r.stderr ?? ""}\n${r.stdout ?? ""}`.trim();
   if (r.status !== 0) {
-    const tail = (r.stderr ?? "").trim().split("\n").slice(-3).join(" | ");
-    return { error: `${phase}: exit ${r.status}${tail ? ` (${tail})` : ""}` };
+    // The CLI sometimes exits 1 with the only explanation on stdout, so both
+    // streams belong in the message.
+    const tail = output.split("\n").slice(-3).join(" | ").slice(-400);
+    return {
+      error: `${phase}: exit ${r.status}${tail ? ` (${tail})` : ""}`,
+      fatal: fatalFrom(output) ?? undefined,
+    };
   }
   const session = parseSession(r.stdout ?? "");
   if (!session) {
     const tail = (r.stdout ?? "").trim().split("\n").slice(-2).join(" | ");
-    return { error: `${phase}: no result event${tail ? ` (${tail})` : ""}` };
+    return { error: `${phase}: no result event${tail ? ` (${tail})` : ""}`, fatal: fatalFrom(output) ?? undefined };
   }
   return { session };
 }
@@ -420,16 +474,17 @@ function pct(x: number): string {
 
 function summarise(records: Run[]): void {
   console.log("\nprobe session, medians across runs");
-  console.log("  condition   runs  solved   turns    tokens   output   cost    seed tokens");
-  console.log("  ───────────────────────────────────────────────────────────────────────────");
+  console.log("  condition   runs  errors  solved   turns    tokens   output   cost    seed tokens");
+  console.log("  ────────────────────────────────────────────────────────────────────────────────────");
   for (const condition of CONDITIONS) {
     const runs = records.filter((r) => r.condition === condition);
     if (!runs.length) continue;
     const probes = runs.flatMap((r) => (r.probe ? [r.probe] : []));
     const seeds = runs.flatMap((r) => (r.seed ? [r.seed] : []));
     const solved = runs.filter((r) => r.solved).length;
+    const errors = runs.filter((r) => r.error).length;
     console.log(
-      `  ${condition.padEnd(9)}  ${String(runs.length).padStart(4)}  ${pct(solved / runs.length).padStart(5)}  ` +
+      `  ${condition.padEnd(9)}  ${String(runs.length).padStart(4)}  ${String(errors).padStart(6)}  ${pct(solved / runs.length).padStart(5)}  ` +
         `${median(probes.map((p) => p.turns)).toFixed(1).padStart(5)}  ` +
         `${Math.round(median(probes.map((p) => p.tokens))).toString().padStart(7)}  ` +
         `${Math.round(median(probes.map((p) => p.outputTokens))).toString().padStart(6)}  ` +
@@ -440,7 +495,14 @@ function summarise(records: Run[]): void {
   console.log("\n  seed is the cost of acquiring the memory; probe is the cost of using it.");
   console.log("  Solved is assertion-based. Every run, including failures, is in runs.jsonl.");
   const total = records.reduce((sum, r) => sum + (r.seed?.costUsd ?? 0) + (r.probe?.costUsd ?? 0), 0);
-  console.log(`  total reported cost: $${total.toFixed(2)} for ${records.length * 2} sessions.`);
+  const sessions = records.reduce((n, r) => n + (r.seed ? 1 : 0) + (r.probe ? 1 : 0), 0);
+  console.log(`  total reported cost: $${total.toFixed(2)} for ${sessions} sessions.`);
+  const errored = records.filter((r) => r.error).length;
+  if (errored) {
+    console.log(`\n  ${errored} run(s) errored. This run is VOID: an error is not an unsolved run.`);
+    console.log("  The table above is partial at best; do not quote it. runs.jsonl has each error.");
+    process.exitCode = 1;
+  }
 
   // With a handful of pairs, medians across all of them hide a scenario that
   // always wins or always loses. Show each one.
@@ -453,15 +515,31 @@ function summarise(records: Run[]): void {
         const runs = records.filter((r) => r.scenario === id && r.condition === condition);
         if (!runs.length) return "—".padStart(12);
         const solved = runs.filter((r) => r.solved).length;
+        const errors = runs.filter((r) => r.error).length;
         const turns = median(runs.flatMap((r) => (r.probe ? [r.probe.turns] : [])));
-        return `${pct(solved / runs.length)} / ${turns.toFixed(1)}`.padStart(12);
+        return `${errors ? "!" : ""}${pct(solved / runs.length)} / ${turns.toFixed(1)}`.padStart(12);
       });
       console.log(`  ${id.padEnd(24)}${cells.join("")}`);
     }
+    if (records.some((r) => r.error)) console.log("  ! = has errored runs; those cells are not results.");
   }
 }
 
 async function main(): Promise<void> {
+  const scenarios = loadScenarios();
+  if (process.argv.includes("--validate")) {
+    console.log("scenarios (validated; no model is run)");
+    for (const s of scenarios) {
+      const provenance = s.provenance ?? "synthetic";
+      const from = s.harvestedFrom ? ` · ${s.harvestedFrom.date} ${s.harvestedFrom.session}` : "";
+      console.log(
+        `  ${s.id.padEnd(24)} ${provenance.padEnd(10)} ${s.checks.length} check(s), ` +
+          `${s.repoMustNotContain?.length ?? 0} leak guard(s)${from}`,
+      );
+    }
+    console.log("\n  all scenarios are valid and leak-free.");
+    return;
+  }
   const agent = arg("agent", "claude") as Agent;
   if (agent !== "claude" && agent !== "mock") throw new Error(`unknown --agent=${agent}`);
   if (agent === "claude" && !process.env.ANTHROPIC_API_KEY) {
@@ -479,7 +557,6 @@ async function main(): Promise<void> {
   const budget = arg("budget", "1.00");
   const model = arg("model", "");
   const keep = process.argv.includes("--keep");
-  const scenarios = loadScenarios();
   const version = agent === "claude" ? claudeVersion() : null;
 
   if (!existsSync(distCli)) throw new Error("dist/cli.js is missing: run `npm run build` first");
@@ -495,25 +572,31 @@ async function main(): Promise<void> {
       `${synthetic} synthetic scenario(s): they can show a fact survived, not that real repeated work got cheaper.`,
     );
   }
+  const harvested = scenarios.filter((s) => s.provenance === "harvested").length;
+  if (harvested) console.log(`${harvested} harvested scenario(s).`);
   if (agent === "claude") {
     console.log(`claude ${version ?? "(version unknown)"}${model ? `, model ${model}` : ", account default model"}`);
   }
   console.log("auto memory, lethe and the operator's settings are isolated per run.");
 
   const records: Run[] = [];
-  for (const scenario of scenarios) {
+  let aborted: string | null = null;
+  outer: for (const scenario of scenarios) {
     for (const condition of conditions) {
       for (let repeat = 1; repeat <= repeats; repeat++) {
         const s = sandboxFor(scenario);
         const record: Run = { scenario: scenario.id, condition, repeat, solved: false, checks: [] };
+        let fatal: string | undefined;
         try {
           const seed = runSession(agent, scenario.seedPrompt, condition, scenario, s, "seed", timeoutMs, budget, model);
           record.seed = seed.session;
+          fatal = seed.fatal;
           if (seed.error) record.error = seed.error;
           else {
             resetRepo(s, scenario, condition);
             const probe = runSession(agent, scenario.probePrompt, condition, scenario, s, "probe", timeoutMs, budget, model);
             record.probe = probe.session;
+            fatal = probe.fatal ?? fatal;
             if (probe.error) record.error = probe.error;
             else {
               if (!usesLethe(condition)) assertNoLetheStore(s);
@@ -530,6 +613,10 @@ async function main(): Promise<void> {
         const status = record.error ? `error: ${record.error}` : record.solved ? "solved" : "unsolved";
         const turns = record.probe ? `${record.probe.turns} turns` : "";
         console.log(`  ${scenario.id} / ${condition} / run ${repeat}: ${status}${turns ? `, ${turns}` : ""}`);
+        if (fatal) {
+          aborted = fatal;
+          break outer;
+        }
       }
     }
   }
@@ -552,6 +639,7 @@ async function main(): Promise<void> {
           id: s.id,
           category: s.category,
           provenance: s.provenance ?? "synthetic",
+          harvestedFrom: s.harvestedFrom ?? null,
           prompts: { seed: s.seedPrompt, probe: s.probePrompt },
         })),
         // Raw records, not just the table: docs/evals.md promises the runs.
@@ -562,6 +650,12 @@ async function main(): Promise<void> {
     ) + "\n",
   );
 
+  if (aborted) {
+    console.log(`\n  run aborted: ${aborted}. Every later session would fail the same way.`);
+    console.log("  Top up the API key, or use a token from `claude setup-token`, then retry.");
+    console.log("  The partial results are saved, but they are not a result.");
+    process.exitCode = 1;
+  }
   summarise(records);
   console.log(`\n  raw runs: ${outDir}`);
   if (agent === "mock") {

@@ -271,6 +271,11 @@ from `claude setup-token`. It never reads the operator's keychain. A published r
 the Claude Code version and model, because a result is only meaningful for the account and
 model that produced it.
 
+The MCP config follows the condition: `cold` and `auto` get an empty server list, `lethe`
+and `both` get the lethe server. This is one function, not a special case per caller. A
+`cold` or `auto` run that writes to `LETHE_HOME` is void, because it did not get the
+baseline it claims to be.
+
 The probe starts from a fresh copy of the fixture, so anything the seed session wrote into
 the repository is discarded. Only memory survives: claims in `.lethe/` for the lethe
 conditions, and `LETHE_HOME` and `CLAUDE_CONFIG_DIR` for all of them.
@@ -282,6 +287,15 @@ given way. LLM-as-judge is not used for the headline number. Every run, includin
 and errors, is written to `evals/results/agent-<timestamp>/runs.jsonl`, with a
 `summary.json` beside it. `evals/results/` is gitignored so raw runs are published
 deliberately rather than accumulating in the repository.
+
+### An errored run is not a result
+
+An error (an API failure, a rejected key, a missing result event) is counted separately
+from an unsolved run, and a run with any error is marked **VOID** and exits non-zero. The
+table is still printed for diagnosis; it is not a result. Two failures abort the whole run
+after the session that hit them — `Credit balance is too low`, and a rejected or missing
+key — because every later session would fail identically. `--validate` checks the pairs and
+their leak guards without spending a model.
 
 ### What is missing
 
@@ -297,7 +311,9 @@ numbers **must never be published as evidence about real work**. What is still n
   A scenario declares those literals in `repoMustNotContain`, and the harness refuses to
   start if one appears in the fixture or the probe prompt. Eval-only variables are passed
   to the mock agent and to command checks, never to the real agent;
-- 30–50 (seed, probe) pairs harvested from real sessions, marked `provenance: harvested`;
+- 30–50 (seed, probe) pairs harvested from real sessions, marked `provenance: harvested`
+  and carrying `harvestedFrom: { date, session }`, which the harness requires before it
+  treats the label as meaningful;
 - the runs themselves, including the ones where lethe loses.
 
 Until then synthetic results measure persistence, the retrieval tables above are the only

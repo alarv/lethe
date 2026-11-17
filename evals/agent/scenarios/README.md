@@ -15,6 +15,7 @@ One directory per scenario:
   "id": "must match the directory name",
   "category": "environment | build | test | release | ...",
   "provenance": "synthetic | harvested",
+  "harvestedFrom": { "date": "YYYY-MM-DD", "session": "where the pair came from" },
   "seedPrompt": "the first task; tells the agent the thing it must remember",
   "probePrompt": "the later task, worded differently",
   "seedAnswer": "what a correct result looks like; the mock agent reads this, nothing else does",
@@ -56,6 +57,16 @@ hand; it can show that a fact survived a fresh checkout, not that real repeated 
 cheaper. The summary records provenance, and a run containing synthetic pairs says so.
 Never present synthetic numbers as evidence about real work.
 
+A label is not evidence. A `harvested` pair must name where it came from in
+`harvestedFrom: { date, session }` and must declare at least one `repoMustNotContain`
+literal. `--validate` refuses a harvested pair without either, so a synthetic pair cannot
+be relabelled to look like field data. Keep the session reference in a private note if the
+content is sensitive; do not put client names, hosts or credentials in the pair.
+
+Before a pair leaves the machine: replace real hosts and accounts with fixture values,
+strip tokens and internal paths, and make sure `repoMustNotContain` covers every form of
+the answer. The pair is public; the session is not.
+
 ## What makes a usable pair
 
 Harvest from a real session: the agent learns something the repository does not state —
@@ -81,11 +92,24 @@ variance control, not new evidence; new pairs add evidence.
 
 ```sh
 npm run build
+npm run eval:agent -- --validate                          # no model, checks the pairs
 npm run eval:agent -- --agent=mock --scenarios=<id> --conditions=cold,auto,lethe,both
 npm run eval:agent -- --scenarios=<id> --repeats=3
 ```
 
-The second command is the real one. A fresh `CLAUDE_CONFIG_DIR` has no login, so export
+`--validate` loads every pair, checks required fields, provenance metadata and the leak
+guard, and prints a table. It spends no model and needs no key, so run it before a real
+run.
+
+The third command is the real one. A fresh `CLAUDE_CONFIG_DIR` has no login, so export
 `ANTHROPIC_API_KEY` first — an API key or the token from `claude setup-token`. The run
 records the Claude Code version and model in `summary.json` and writes raw runs to
 `evals/results/`.
+
+## A run that errored is not a result
+
+Errors are counted separately and the summary is marked **VOID** if any run errored; the
+command exits 1. `Credit balance is too low` and a rejected or missing key abort the whole
+run after the failing session instead of producing 50 more identical errors. Partial
+results are still written to `runs.jsonl`, but they are not evidence. A `!` in the
+per-scenario table means that cell contains errored runs.
