@@ -94,7 +94,7 @@ variance control, not new evidence; new pairs add evidence.
 npm run build
 npm run eval:agent -- --validate                          # no model, checks the pairs
 npm run eval:agent -- --agent=mock --scenarios=<id> --conditions=cold,auto,lethe,both
-npm run eval:agent -- --scenarios=<id> --repeats=3
+npm run eval:agent -- --scenarios=<id> --repeats=3 --total-budget=5
 ```
 
 `--validate` loads every pair, checks required fields, provenance metadata and the leak
@@ -112,4 +112,6 @@ Errors are counted separately and the summary is marked **VOID** if any run erro
 command exits 1. `Credit balance is too low` and a rejected or missing key abort the whole
 run after the failing session instead of producing 50 more identical errors. Partial
 results are still written to `runs.jsonl`, but they are not evidence. A `!` in the
-per-scenario table means that cell contains errored runs.
+per-scenario table means that cell contains errored runs. `--total-budget=<usd>` stops an
+unattended run once the reported cost crosses that number, which is the only protection
+against a long run you are not watching.

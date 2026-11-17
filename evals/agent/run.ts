@@ -555,6 +555,8 @@ async function main(): Promise<void> {
   const repeats = intArg("repeats", 5);
   const timeoutMs = intArg("timeout-ms", 600_000);
   const budget = arg("budget", "1.00");
+  const totalBudgetRaw = Number(arg("total-budget", "0"));
+  const totalBudget = Number.isFinite(totalBudgetRaw) && totalBudgetRaw > 0 ? totalBudgetRaw : 0;
   const model = arg("model", "");
   const keep = process.argv.includes("--keep");
   const version = agent === "claude" ? claudeVersion() : null;
@@ -578,7 +580,9 @@ async function main(): Promise<void> {
     console.log(`claude ${version ?? "(version unknown)"}${model ? `, model ${model}` : ", account default model"}`);
   }
   console.log("auto memory, lethe and the operator's settings are isolated per run.");
+  if (totalBudget) console.log(`total budget: $${totalBudget.toFixed(2)}; the run stops when it is reached.`);
 
+  const planned = scenarios.length * conditions.length * repeats;
   const records: Run[] = [];
   let aborted: string | null = null;
   outer: for (const scenario of scenarios) {
@@ -617,6 +621,11 @@ async function main(): Promise<void> {
           aborted = fatal;
           break outer;
         }
+        const spent = records.reduce((sum, r) => sum + (r.seed?.costUsd ?? 0) + (r.probe?.costUsd ?? 0), 0);
+        if (totalBudget && spent > totalBudget && records.length < planned) {
+          aborted = `total budget of $${totalBudget.toFixed(2)} reached`;
+          break outer;
+        }
       }
     }
   }
@@ -651,9 +660,13 @@ async function main(): Promise<void> {
   );
 
   if (aborted) {
-    console.log(`\n  run aborted: ${aborted}. Every later session would fail the same way.`);
-    console.log("  Top up the API key, or use a token from `claude setup-token`, then retry.");
-    console.log("  The partial results are saved, but they are not a result.");
+    console.log(`\n  run aborted: ${aborted}.`);
+    if (/credit|key|auth|logged in/i.test(aborted)) {
+      console.log("  Top up the API key, or use a token from `claude setup-token`, then retry.");
+    } else {
+      console.log("  Partial results are saved; raise --total-budget to finish the run.");
+    }
+    console.log("  The partial results are not a result.");
     process.exitCode = 1;
   }
   summarise(records);

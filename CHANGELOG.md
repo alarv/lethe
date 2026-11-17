@@ -42,8 +42,9 @@ The release workflow refuses to publish a version with no section here.
 - **An errored agent-eval run can no longer look like a result.** Errors get their own
   column, the summary prints **VOID** and exits 1, and a credit or auth failure aborts the
   run after the session that hit it instead of repeating the same error for every remaining
-  session. The failure message keeps the tail of stdout as well as stderr, because the CLI
-  sometimes explains itself only on stdout. `--validate` checks every pair and its leak
+  session. `--total-budget` stops an unattended run at a chosen spend. The failure message
+  keeps the tail of stdout as well as stderr, because the CLI sometimes explains itself
+  only on stdout. `--validate` checks every pair and its leak
   guard without a model, and a `harvested` pair must name its source in
   `harvestedFrom: { date, session }` — a synthetic pair cannot be relabelled as field data.
 - **The smoke fixture no longer contains a password.** Its URL was

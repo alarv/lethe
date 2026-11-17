@@ -294,7 +294,8 @@ An error (an API failure, a rejected key, a missing result event) is counted sep
 from an unsolved run, and a run with any error is marked **VOID** and exits non-zero. The
 table is still printed for diagnosis; it is not a result. Two failures abort the whole run
 after the session that hit them — `Credit balance is too low`, and a rejected or missing
-key — because every later session would fail identically. `--validate` checks the pairs and
+key — because every later session would fail identically. `--total-budget=<usd>` stops the
+run once the reported cost crosses a number you chose, and `--validate` checks the pairs and
 their leak guards without spending a model.
 
 ### What is missing
