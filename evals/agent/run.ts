@@ -16,7 +16,7 @@
  * ~/.lethe, or inherit the operator's auto memory or settings. Telemetry is
  * switched off for every process the harness starts.
  *
- *   npm run eval:agent                                   # claude, all conditions
+ *   npm run eval:agent                                   # claude, the three launch conditions
  *   npm run eval:agent -- --agent=mock                   # plumbing check, no model
  *   npm run eval:agent -- --repeats=5 --conditions=auto,lethe
  *
@@ -26,10 +26,10 @@
  * Nothing here reads, stores or prints credentials. A published run must name
  * the Claude Code version and model that produced it.
  *
- * The only shipped scenario is `smoke`, which exists to prove the harness runs
- * end to end. It is not evidence for the thesis and its numbers must not be
- * quoted in docs/evals.md as such. Real scenarios need checks that run the
- * project's own tests, and tasks drawn from real sessions.
+ * The shipped scenarios are synthetic: they prove the harness runs end to end
+ * and that a told fact survives a fresh checkout. They are not evidence for the
+ * thesis and their numbers must not be quoted as such. The gate needs tasks
+ * drawn from real sessions, with checks that run the project's own tests.
  */
 
 import { spawnSync } from "node:child_process";
