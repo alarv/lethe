@@ -21,12 +21,12 @@
  *   npm run eval:agent -- --repeats=5 --conditions=auto,lethe
  *
  * It needs a model. CLAUDE_CONFIG_DIR is isolated per run, and a fresh one has
- * no login, so the run authenticates with ANTHROPIC_API_KEY, or with the
- * long-lived token from `claude setup-token` exported as CLAUDE_CODE_OAUTH_TOKEN
- * (that token is not an API key and is rejected under ANTHROPIC_API_KEY). It
- * never reads the operator's keychain.
- * Nothing here reads, stores or prints credentials. A published run must name
- * the Claude Code version and model that produced it.
+ * no login, so the run authenticates from the environment: ANTHROPIC_API_KEY
+ * for a Console key, or CLAUDE_CODE_OAUTH_TOKEN for a subscription token from
+ * `claude setup-token`. The two are not interchangeable: a subscription token
+ * in ANTHROPIC_API_KEY is rejected as an invalid API key. It never reads the
+ * operator's keychain. Nothing here reads, stores or prints credentials. A
+ * published run must name the agent version and model that produced it.
  *
  * The shipped scenarios are synthetic: they prove the harness runs end to end
  * and that a told fact survives a fresh checkout. They are not evidence for the
@@ -557,11 +557,19 @@ async function main(): Promise<void> {
   }
   const agent = arg("agent", "claude") as Agent;
   if (agent !== "claude" && agent !== "mock") throw new Error(`unknown --agent=${agent}`);
-  if (agent === "claude" && !process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+  const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
+  const hasOauthToken = Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
+  if (agent === "claude" && !hasApiKey && !hasOauthToken) {
     throw new Error(
-      "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN: a fresh CLAUDE_CONFIG_DIR has no login, so every run would fail.\n" +
-        "Export an API key as ANTHROPIC_API_KEY, or run `claude setup-token` and export that token as CLAUDE_CODE_OAUTH_TOKEN.",
+      "no model credential: a fresh CLAUDE_CONFIG_DIR has no login, so the run would fail 24 times.\n" +
+        "Set ANTHROPIC_API_KEY for a Console key, or CLAUDE_CODE_OAUTH_TOKEN for a subscription\n" +
+        "token from `claude setup-token`. They are not interchangeable.",
+
     );
+  }
+  if (hasApiKey && hasOauthToken) {
+    console.log("both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are set; the API key wins.");
+    console.log("Unset the one you do not mean to use.");
   }
   const conditions = (arg("conditions", DEFAULT_CONDITIONS.join(",")).split(",") as Condition[]).filter((c) =>
     CONDITIONS.includes(c),
@@ -593,6 +601,7 @@ async function main(): Promise<void> {
   if (harvested) console.log(`${harvested} harvested scenario(s).`);
   if (agent === "claude") {
     console.log(`claude ${version ?? "(version unknown)"}${model ? `, model ${model}` : ", account default model"}`);
+    console.log(`auth: ${hasApiKey ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN"}`);
   }
   console.log("auto memory, lethe and the operator's settings are isolated per run.");
   if (totalBudget) console.log(`total budget: $${totalBudget.toFixed(2)}; the run stops when it is reached.`);

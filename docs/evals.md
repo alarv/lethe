@@ -266,10 +266,13 @@ operator's `~/.lethe`, or inheriting their auto memory and settings. Telemetry i
 every process the harness starts. Credentials are never read, written or printed.
 
 `CLAUDE_CONFIG_DIR` is fresh for every run, and a fresh one has no login. A real run
-therefore needs `ANTHROPIC_API_KEY` in the environment — an API key or the long-lived token
-from `claude setup-token`. It never reads the operator's keychain. A published run records
-the Claude Code version and model, because a result is only meaningful for the account and
-model that produced it.
+therefore needs a credential in the environment: `ANTHROPIC_API_KEY` for a Console API key,
+or `CLAUDE_CODE_OAUTH_TOKEN` for the long-lived token from `claude setup-token`. They are not
+interchangeable — a subscription token in `ANTHROPIC_API_KEY` is rejected as an invalid API
+key, and an API key outranks the OAuth token when both are set. It never reads the
+operator's keychain. A published run records the Claude Code version, model and which
+credential supplied the run, because a result is only meaningful for the account and model
+that produced it.
 
 The MCP config follows the condition: `cold` and `auto` get an empty server list, `lethe`
 and `both` get the lethe server. This is one function, not a special case per caller. A

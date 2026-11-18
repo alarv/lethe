@@ -101,8 +101,10 @@ npm run eval:agent -- --scenarios=<id> --repeats=3 --total-budget=5
 guard, and prints a table. It spends no model and needs no key, so run it before a real
 run.
 
-The third command is the real one. A fresh `CLAUDE_CONFIG_DIR` has no login, so export
-`ANTHROPIC_API_KEY` first — an API key or the token from `claude setup-token`. The run
+The third command is the real one. A fresh `CLAUDE_CONFIG_DIR` has no login, so export a
+credential first: `ANTHROPIC_API_KEY` for a Console key, or `CLAUDE_CODE_OAUTH_TOKEN` for
+the token from `claude setup-token`. `Invalid API key · Fix external API key` usually means
+a subscription token was put in `ANTHROPIC_API_KEY`, or an old key is still exported. The run
 records the Claude Code version and model in `summary.json` and writes raw runs to
 `evals/results/`.
 

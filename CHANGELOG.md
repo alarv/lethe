@@ -31,6 +31,10 @@ The release workflow refuses to publish a version with no section here.
 
 ### Fixed
 
+- **The agent eval tells the two credentials apart.** A `claude setup-token` token is an
+  OAuth token for `CLAUDE_CODE_OAUTH_TOKEN`, not an API key; sent as `ANTHROPIC_API_KEY` it
+  is rejected as `Invalid API key · Fix external API key`. The preflight accepts either,
+  warns when both are set (the API key wins), and records which one supplied the run.
 - **The agent eval stops before an unauthenticated run.** A fresh `CLAUDE_CONFIG_DIR` has no
   login, so the first real attempt failed 24 sessions with `exit 1` and no message. It now
   checks for `ANTHROPIC_API_KEY` up front and says to run `claude setup-token`.
