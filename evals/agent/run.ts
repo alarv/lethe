@@ -21,8 +21,10 @@
  *   npm run eval:agent -- --repeats=5 --conditions=auto,lethe
  *
  * It needs a model. CLAUDE_CONFIG_DIR is isolated per run, and a fresh one has
- * no login, so the run authenticates with ANTHROPIC_API_KEY (or the long-lived
- * token from `claude setup-token`). It never reads the operator's keychain.
+ * no login, so the run authenticates with ANTHROPIC_API_KEY, or with the
+ * long-lived token from `claude setup-token` exported as CLAUDE_CODE_OAUTH_TOKEN
+ * (that token is not an API key and is rejected under ANTHROPIC_API_KEY). It
+ * never reads the operator's keychain.
  * Nothing here reads, stores or prints credentials. A published run must name
  * the Claude Code version and model that produced it.
  *
@@ -118,6 +120,8 @@ interface Session {
   outputTokens: number;
   costUsd: number;
   text: string;
+  /** Tools the host refused although the harness allowed them. */
+  denied: string[];
 }
 
 interface CheckResult {
@@ -375,6 +379,9 @@ function parseSession(stdout: string): Session | null {
     outputTokens: output,
     costUsd: typeof last.total_cost_usd === "number" ? last.total_cost_usd : 0,
     text: typeof last.result === "string" ? last.result : "",
+    denied: Array.isArray(last.permission_denials)
+      ? [...new Set((last.permission_denials as { tool_name?: string }[]).map((d) => String(d.tool_name)))]
+      : [],
   };
 }
 
@@ -384,7 +391,7 @@ function parseSession(stdout: string): Session | null {
  */
 const FATAL: [RegExp, string][] = [
   [/credit balance is too low/i, "API credit is exhausted"],
-  [/invalid x-api-key/i, "the API key was rejected"],
+  [/invalid x-api-key|invalid api key|"api_error_status":401/i, "the API key was rejected"],
   [/not logged in/i, "the session is not authenticated"],
 ];
 
@@ -426,6 +433,13 @@ function runSession(
   if (!session) {
     const tail = (r.stdout ?? "").trim().split("\n").slice(-2).join(" | ");
     return { error: `${phase}: no result event${tail ? ` (${tail})` : ""}`, fatal: fatalFrom(output) ?? undefined };
+  }
+  // Every tool the agent needs is allowed on the command line, so a denial comes
+  // from the host's own policy. The session did not run the condition it claims,
+  // and every later session will be refused the same way.
+  if (session.denied.length) {
+    const tools = session.denied.join(", ");
+    return { session, error: `${phase}: tools denied: ${tools}`, fatal: `the host denied tools the harness allows (${tools})` };
   }
   return { session };
 }
@@ -542,10 +556,10 @@ async function main(): Promise<void> {
   }
   const agent = arg("agent", "claude") as Agent;
   if (agent !== "claude" && agent !== "mock") throw new Error(`unknown --agent=${agent}`);
-  if (agent === "claude" && !process.env.ANTHROPIC_API_KEY) {
+  if (agent === "claude" && !process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
     throw new Error(
-      "no ANTHROPIC_API_KEY: a fresh CLAUDE_CONFIG_DIR has no login, so the run would fail 24 times.\n" +
-        "Run `claude setup-token`, export the token as ANTHROPIC_API_KEY, and retry.",
+      "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN: a fresh CLAUDE_CONFIG_DIR has no login, so every run would fail.\n" +
+        "Export an API key as ANTHROPIC_API_KEY, or run `claude setup-token` and export that token as CLAUDE_CODE_OAUTH_TOKEN.",
     );
   }
   const conditions = (arg("conditions", DEFAULT_CONDITIONS.join(",")).split(",") as Condition[]).filter((c) =>
@@ -662,7 +676,10 @@ async function main(): Promise<void> {
   if (aborted) {
     console.log(`\n  run aborted: ${aborted}.`);
     if (/credit|key|auth|logged in/i.test(aborted)) {
-      console.log("  Top up the API key, or use a token from `claude setup-token`, then retry.");
+      console.log("  Check ANTHROPIC_API_KEY (a `claude setup-token` token belongs in CLAUDE_CODE_OAUTH_TOKEN), then retry.");
+    } else if (/denied/.test(aborted)) {
+      console.log("  Managed settings with allowManagedPermissionRulesOnly ignore --allowedTools, so an");
+      console.log("  unattended session cannot use them. Run the eval where that policy does not apply.");
     } else {
       console.log("  Partial results are saved; raise --total-budget to finish the run.");
     }
