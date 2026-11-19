@@ -13,6 +13,12 @@ The release workflow refuses to publish a version with no section here.
 
 ### Added
 
+- **The agent eval runs on opencode too (`--agent=opencode`).** The Claude path needs API
+  credit, and a credit failure is not a reason the mechanism cannot be checked. opencode has
+  no automatic cross-session memory, so the harness accepts only `cold,lethe` there and says
+  why; the free `opencode/deepseek-v4.1-flash-free` model validates a pair without a bill.
+  The model is required on the command line and recorded in the summary, because a result
+  is only meaningful for the agent version and model that produced it.
 - **An end-to-end agent eval harness (`npm run eval:agent`).** The retrieval eval measures
   the layer under the turns/tokens claim; this runs the claim itself: a seed session that
   discovers something and a probe session in a fresh context that needs it, under the
@@ -31,6 +37,15 @@ The release workflow refuses to publish a version with no section here.
 
 ### Fixed
 
+- **The agent eval can no longer be solved by reading the host.** A `cold` probe grepped
+  `/Users/.../lethe`, read `evals/agent/scenarios/staging-host/scenario.json` and an old
+  `runs.jsonl`, and wrote the exact answer with no memory; the synthetic cold baseline was
+  invalid. A scenario now declares `fact: "...{{random}}..."` and writes `{{FACT}}` in its
+  prompts, checks and guards, so the answer exists only in memory for that pair. Each phase
+  gets its own `HOME`; the seed's session data and shell home are deleted before the probe;
+  `PWD`, `npm_*` and the other variables that name this project are stripped. A tool call
+  that reads `/Users`, `/home`, `/root`, a bare `/` or `../..` voids and aborts the run.
+  Re-run on opencode: `cold` 0%/12 turns, `lethe` 100%/9 turns on `staging-host`.
 - **The agent eval tells the two credentials apart.** A `claude setup-token` token is an
   OAuth token for `CLAUDE_CODE_OAUTH_TOKEN`, not an API key; sent as `ANTHROPIC_API_KEY` it
   is rejected as `Invalid API key · Fix external API key`. The preflight accepts either,

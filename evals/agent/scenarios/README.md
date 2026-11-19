@@ -16,13 +16,14 @@ One directory per scenario:
   "category": "environment | build | test | release | ...",
   "provenance": "synthetic | harvested",
   "harvestedFrom": { "date": "YYYY-MM-DD", "session": "where the pair came from" },
-  "seedPrompt": "the first task; tells the agent the thing it must remember",
+  "fact": "staging-{{random}}.internal.example:8443",
+  "seedPrompt": "the first task; tells the agent the thing it must remember ({{FACT}})",
   "probePrompt": "the later task, worded differently",
   "seedAnswer": "what a correct result looks like; the mock agent reads this, nothing else does",
-  "repoMustNotContain": ["the value the probe must not be able to find"],
-  "checkEnv": { "LETHE_EXPECT_URL": "..." },
+  "repoMustNotContain": ["{{FACT}}"],
+  "checkEnv": { "LETHE_EXPECT_URL": "{{FACT}}" },
   "checks": [
-    { "kind": "file", "path": "SOLVED", "contains": "..." },
+    { "kind": "file", "path": "SOLVED", "contains": "{{FACT}}" },
     { "kind": "command", "command": ["node", "check.js"], "expectExit": 0 }
   ]
 }
@@ -36,9 +37,23 @@ does, `cold` finds it, the run is void, and you have measured search rather than
 Run `npm run eval:agent -- --agent=mock` and confirm `cold` is 0% solved before spending a
 model.
 
+The answer must also not be on disk anywhere else the agent can reach. The harness hides
+the obvious paths, but a literal in `scenario.json` can be found by grepping the project, and
+so can a literal in an old result. Declare a per-pair template instead:
+
+```json
+"fact": "staging-{{random}}.internal.example:8443"
+```
+
+`{{random}}` is replaced with fresh hex for every (seed, probe) pair, and every `{{FACT}}` in
+the prompts, `checks`, `checkEnv` and `repoMustNotContain` becomes that value. The file on
+disk only ever contains the template. A harvested pair keeps its shape and provenance but
+replaces the real value the same way; put the transformation in `harvestedFrom.redactions`.
+
 `repoMustNotContain` is checked against every file in the fixture and against the probe
-prompt before the run starts; the harness refuses to spend a model on a leaked pair. Every
-answer-shaped literal belongs there.
+prompt before the run starts, and again after a sample is materialized. The harness refuses
+to spend a model on a leaked pair. Every answer-shaped literal belongs there, including the
+`{{FACT}}` placeholder when the value is randomized.
 
 `checkEnv` goes to command checks only, never to the agent. `seedAnswer` goes to the mock
 only. Neither is a place to hide an answer the agent will see.
@@ -48,7 +63,11 @@ in `repo/`. Directories whose name starts with `_` are never loaded.
 
 The probe starts from a fresh copy of `repo/`. Anything the seed session wrote or edited is
 discarded; only the memory stores survive — `.lethe/` for the lethe conditions, plus
-`LETHE_HOME` and `CLAUDE_CONFIG_DIR` for all of them.
+`LETHE_HOME` and `CLAUDE_CONFIG_DIR` for all of them. The seed's session data and shell home
+are deleted too. Each phase gets its own `HOME`, and the harness strips `PWD`, `npm_*` and
+the other variables that would name this project; a tool call that reads `/Users`, `/home`,
+`/root`, `/` or `../..` voids the run. That is a guard, not a jail: a pair that depends on a
+long real value which cannot be randomized should be run in a clean container, or dropped.
 
 ## Provenance
 
@@ -95,13 +114,19 @@ npm run build
 npm run eval:agent -- --validate                          # no model, checks the pairs
 npm run eval:agent -- --agent=mock --scenarios=<id> --conditions=cold,auto,lethe,both
 npm run eval:agent -- --scenarios=<id> --repeats=3 --total-budget=5
+npm run eval:agent -- --agent=opencode --model=opencode/deepseek-v4.1-flash-free \
+  --scenarios=<id> --conditions=cold,lethe --repeats=1
 ```
+
+The `opencode` form spends no API credit on the free model, which makes the cold/learnable
+check available before a budget exists. It is slower than Claude and has no `auto` memory,
+so only `cold` and `lethe` are valid conditions; the harness refuses `auto` and `both`.
 
 `--validate` loads every pair, checks required fields, provenance metadata and the leak
 guard, and prints a table. It spends no model and needs no key, so run it before a real
 run.
 
-The third command is the real one. A fresh `CLAUDE_CONFIG_DIR` has no login, so export a
+The Claude command is the real one. A fresh `CLAUDE_CONFIG_DIR` has no login, so export a
 credential first: `ANTHROPIC_API_KEY` for a Console key, or `CLAUDE_CODE_OAUTH_TOKEN` for
 the token from `claude setup-token`. `Invalid API key · Fix external API key` usually means
 a subscription token was put in `ANTHROPIC_API_KEY`, or an old key is still exported. The run

@@ -258,21 +258,53 @@ solves the task means the grading is broken, the isolation leaked, or **the answ
 discoverable in the sandbox** — and a discoverable answer makes the scenario void. It is not
 one of the launch conditions and its numbers are not a claim about lethe.
 
+### Agents
+
+`--agent=claude` (the default) runs the three launch conditions with Claude Code. It needs a
+credential in the environment because `CLAUDE_CONFIG_DIR` is fresh and a fresh one has no
+login: `ANTHROPIC_API_KEY` for a Console API key, or `CLAUDE_CODE_OAUTH_TOKEN` for the
+long-lived token from `claude setup-token`. They are not interchangeable — a subscription
+token in `ANTHROPIC_API_KEY` is rejected as an invalid API key, and an API key outranks the
+OAuth token when both are set. It never reads the operator's keychain. A published run
+records the Claude Code version, model and which credential supplied the run.
+
+`--agent=opencode --model=<provider>/<model>` runs the same pairs through
+[opencode](https://opencode.ai). It requires an explicit model so a result always names the
+model that produced it, and it refuses `auto` and `both`: opencode has no equivalent of
+Claude's automatic cross-session memory, so those labels would be the same runs as `cold`
+and `lethe`. Use `--conditions=cold,lethe`. The free
+`opencode/deepseek-v4.1-flash-free` model makes validation possible without API credit, at
+the cost of speed; a run under it still counts, provided the summary names it. opencode's
+`--format json` gives token and cost totals per step, and the harness records them the same
+way as Claude's `result` event.
+
+`--agent=mock` runs no model. It checks that the conditions, isolation and grading are wired
+correctly; its numbers are invented and are never evidence.
+
 ### Isolation
 
-Each run gets its own sandbox repository, its own `LETHE_HOME` and its own
-`CLAUDE_CONFIG_DIR`. That is what keeps a run from seeing the previous one, touching the
-operator's `~/.lethe`, or inheriting their auto memory and settings. Telemetry is off for
-every process the harness starts. Credentials are never read, written or printed.
+Each run gets its own sandbox repository, its own `LETHE_HOME`, its own `HOME` per phase, and
+its own Claude config or opencode data, config and cache trees. That is what keeps a run
+from seeing the previous one, touching the operator's `~/.lethe`, or inheriting their auto
+memory, settings or shell history. Telemetry is off for every process the harness starts.
+Credentials are never read, written or printed.
 
-`CLAUDE_CONFIG_DIR` is fresh for every run, and a fresh one has no login. A real run
-therefore needs a credential in the environment: `ANTHROPIC_API_KEY` for a Console API key,
-or `CLAUDE_CODE_OAUTH_TOKEN` for the long-lived token from `claude setup-token`. They are not
-interchangeable — a subscription token in `ANTHROPIC_API_KEY` is rejected as an invalid API
-key, and an API key outranks the OAuth token when both are set. It never reads the
-operator's keychain. A published run records the Claude Code version, model and which
-credential supplied the run, because a result is only meaningful for the account and model
-that produced it.
+The harness also strips the environment that names itself: `PWD`, `OLDPWD`, `INIT_CWD`,
+`npm_*`, `NODE_PATH`, `GIT_DIR` and similar. Without that, a probe started from the project
+directory can read `PWD` or `npm_config_local_prefix`, walk to `evals/agent/scenarios/` and
+read the answer. The agent is told to stay inside the repository; a tool call that names
+`/Users`, `/home`, `/root`, a bare `/`, or `../..` is an out-of-sandbox access, marks the run
+VOID and aborts it. The check is heuristic and runs after the session; a clean container is
+still the only hard boundary, so a `--keep` sandbox or a run that touched the host is never
+publishable.
+
+A scenario's answer is randomized per pair. `fact: "staging-{{random}}.internal.example:8443"`
+makes a fresh value for every (seed, probe) pair, and every `{{FACT}}` in the prompts, checks,
+`checkEnv` and `repoMustNotContain` is replaced with it. The scenario file on disk contains
+the template, not the value, so the probe cannot find the answer by grepping the harness, an
+old `runs.jsonl`, or the operator's real repository. The seed's session data and shell home
+are deleted before the probe starts; auto memory in `CLAUDE_CONFIG_DIR` is kept only for
+`auto` and `both`, because that is what those conditions measure.
 
 The MCP config follows the condition: `cold` and `auto` get an empty server list, `lethe`
 and `both` get the lethe server. This is one function, not a special case per caller. A
@@ -288,19 +320,20 @@ conditions, and `LETHE_HOME` and `CLAUDE_CONFIG_DIR` for all of them.
 Checks are assertions: a file with the expected content, or a command that must exit a
 given way. LLM-as-judge is not used for the headline number. Every run, including failures
 and errors, is written to `evals/results/agent-<timestamp>/runs.jsonl`, with a
-`summary.json` beside it. `evals/results/` is gitignored so raw runs are published
+`summary.json` beside it. The summary records the agent version, model, conditions and each
+scenario's `factTemplate`; each run records the random `fact` it actually used. `evals/results/` is gitignored so raw runs are published
 deliberately rather than accumulating in the repository.
 
 ### An errored run is not a result
 
-An error (an API failure, a rejected key, a missing result event) is counted separately
-from an unsolved run, and a run with any error is marked **VOID** and exits non-zero. The
-table is still printed for diagnosis; it is not a result. Two failures abort the whole run
-after the session that hit them — `Credit balance is too low`, a rejected or missing key,
-and a subscription's 5-hour or weekly limit — because every later session would fail
-identically. `--total-budget=<usd>` stops the
-run once the reported cost crosses a number you chose, and `--validate` checks the pairs and
-their leak guards without spending a model.
+An error (an API failure, a rejected key, a missing result event, a timeout) is counted
+separately from an unsolved run, and a run with any error is marked **VOID** and exits
+non-zero. The table is still printed for diagnosis; it is not a result. Two failures abort
+the whole run after the session that hit them — `Credit balance is too low`, a rejected or
+missing key, a subscription's 5-hour or weekly limit, and an out-of-sandbox access —
+because every later session would fail or be invalid the same way. `--total-budget=<usd>`
+stops the run once the reported cost crosses a number you chose, and `--validate` checks the
+pairs and their leak guards without spending a model.
 
 ### What is missing
 
@@ -311,11 +344,13 @@ synthetic pair the agent was told in the seed session is close to tautological, 
 numbers **must never be published as evidence about real work**. What is still needed:
 
 - real scenarios whose checks run the project's own tests, not a marker file. The fact the
-  seed session learns must not be in the sandbox repository, the prompts, or the agent's
-  environment: if it is, `cold` can find it and the probe measures discovery, not memory.
-  A scenario declares those literals in `repoMustNotContain`, and the harness refuses to
-  start if one appears in the fixture or the probe prompt. Eval-only variables are passed
-  to the mock agent and to command checks, never to the real agent;
+  seed session learns must not be on disk anywhere the probe can read: not the sandbox
+  repository, not the prompts, not the agent's environment, not the harness source. Give it
+  a `fact` template with `{{random}}` and write `{{FACT}}` wherever the value appears; a
+  static redacted value is still greppable and still a leak. A scenario declares those
+  literals in `repoMustNotContain`, and the harness refuses to start if one appears in the
+  fixture or the probe prompt. Eval-only variables are passed to the mock agent and to
+  command checks, never to the real agent;
 - 30–50 (seed, probe) pairs harvested from real sessions, marked `provenance: harvested`
   and carrying `harvestedFrom: { date, session }`, which the harness requires before it
   treats the label as meaningful;

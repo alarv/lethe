@@ -2,16 +2,34 @@
   "id": "api-base",
   "category": "client",
   "provenance": "synthetic",
-  "seedPrompt": "The client test fails because API_BASE is not set and the v1 default is retired. The current base is https://api-7.internal.example/v2. Get the test passing and record anything a future session would need.",
+  "seedPrompt": "The client test fails because API_BASE is not set and the v1 default is retired. The current base is {{FACT}}. Get the test passing and record anything a future session would need.",
   "probePrompt": "A fresh checkout has the same failing client test. Work out the cause and write the command that makes it pass, including the environment value, to a file named SOLVED.",
-  "seedAnswer": "API_BASE=https://api-7.internal.example/v2 npm test",
-  "repoMustNotContain": ["https://api-7.internal.example/v2"],
+  "seedAnswer": "API_BASE={{FACT}} npm test",
+  "repoMustNotContain": [
+    "{{FACT}}"
+  ],
   "checkEnv": {
-    "LETHE_EXPECT_BASE": "https://api-7.internal.example/v2"
+    "LETHE_EXPECT_BASE": "{{FACT}}"
   },
   "checks": [
-    { "kind": "file", "path": "SOLVED", "contains": "https://api-7.internal.example/v2" },
-    { "kind": "file", "path": "SOLVED", "contains": "npm test" },
-    { "kind": "command", "command": ["node", "check.js"], "expectExit": 0 }
-  ]
+    {
+      "kind": "file",
+      "path": "SOLVED",
+      "contains": "{{FACT}}"
+    },
+    {
+      "kind": "file",
+      "path": "SOLVED",
+      "contains": "npm test"
+    },
+    {
+      "kind": "command",
+      "command": [
+        "node",
+        "check.js"
+      ],
+      "expectExit": 0
+    }
+  ],
+  "fact": "https://api-{{random}}.internal.example/v2"
 }

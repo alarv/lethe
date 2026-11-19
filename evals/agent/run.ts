@@ -11,17 +11,27 @@
  *   lethe  lethe's memory, Claude auto memory switched off
  *   both   both, which is what a user who installs lethe actually has
  *
- * Isolation is the whole design. Each run gets its own repo, LETHE_HOME and
- * CLAUDE_CONFIG_DIR, so a run cannot see the previous one, touch the real
- * ~/.lethe, or inherit the operator's auto memory or settings. Telemetry is
- * switched off for every process the harness starts.
+ * `--agent=opencode` runs the same pairs through opencode. It has no automatic
+ * cross-session memory, so only `cold` and `lethe` are meaningful there.
+ *
+ * Isolation is the whole design. Each run gets its own repo, LETHE_HOME, HOME
+ * per phase, and CLAUDE_CONFIG_DIR or opencode data/config/cache, so a run
+ * cannot see the previous one, touch the real ~/.lethe, or inherit the
+ * operator's auto memory or settings. The environment is stripped of PWD,
+ * npm_* and the other variables that name this project, and the answer itself
+ * is randomized per pair (`fact` + `{{FACT}}`) so it cannot be grepped from the
+ * harness or an old result. The seed's session data is deleted before the
+ * probe. A tool call outside the sandbox voids the run. Telemetry is off for
+ * every process the harness starts.
  *
  *   npm run eval:agent                                   # claude, the three launch conditions
  *   npm run eval:agent -- --agent=mock                   # plumbing check, no model
+ *   npm run eval:agent -- --agent=opencode --model=opencode/deepseek-v4.1-flash-free \
+ *     --conditions=cold,lethe                            # free validation
  *   npm run eval:agent -- --repeats=5 --conditions=auto,lethe
  *
- * It needs a model. CLAUDE_CONFIG_DIR is isolated per run, and a fresh one has
- * no login, so the run authenticates from the environment: ANTHROPIC_API_KEY
+ * Claude needs a model. CLAUDE_CONFIG_DIR is isolated per run, and a fresh one
+ * has no login, so the run authenticates from the environment: ANTHROPIC_API_KEY
  * for a Console key, or CLAUDE_CODE_OAUTH_TOKEN for a subscription token from
  * `claude setup-token`. The two are not interchangeable: a subscription token
  * in ANTHROPIC_API_KEY is rejected as an invalid API key. It never reads the
@@ -35,6 +45,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -64,7 +75,7 @@ type Condition = "cold" | "auto" | "lethe" | "both";
 const CONDITIONS: Condition[] = ["cold", "auto", "lethe", "both"];
 const DEFAULT_CONDITIONS: Condition[] = ["auto", "lethe", "both"];
 type Phase = "seed" | "probe";
-type Agent = "claude" | "mock";
+type Agent = "claude" | "opencode" | "mock";
 
 type Check =
   | { kind: "file"; path: string; contains?: string }
@@ -83,6 +94,14 @@ interface Scenario {
    * can ask for the session instead of taking the label on trust.
    */
   harvestedFrom?: { date: string; session: string; redactions?: string[] };
+  /**
+   * A per-pair random value. The scenario file stores a template such as
+   * "staging-{{random}}.internal.example:8443"; every "{{FACT}}" in prompts,
+   * checks and guards is replaced with it. This is what stops a probe from
+   * grepping the harness, the real repo or an old result for the answer: the
+   * answer only exists in memory while the pair runs.
+   */
+  fact?: string;
   /** What the seed session is asked to do. Discovers the thing worth keeping. */
   seedPrompt: string;
   /** The later task. Deliberately worded unlike the seed. */
@@ -122,6 +141,8 @@ interface Session {
   text: string;
   /** Tools the host refused although the harness allowed them. */
   denied: string[];
+  tools?: string[];
+  toolCalls?: { tool: string; input?: unknown }[];
 }
 
 interface CheckResult {
@@ -138,6 +159,8 @@ interface Run {
   seed?: Session;
   probe?: Session;
   checks: CheckResult[];
+  /** The random value this pair used, for audit after the fact. */
+  fact?: string;
   error?: string;
 }
 
@@ -166,6 +189,7 @@ function loadScenarios(): Scenario[] {
     if (scenario.id !== id) throw new Error(`${file}: id is "${scenario.id}", directory is "${id}"`);
     assertValid(scenario, file);
     assertNoLeak(scenario);
+    if (scenario.fact) assertNoLeak(materialize(scenario).scenario);
     return scenario;
   });
 }
@@ -187,6 +211,15 @@ function assertValid(scenario: Scenario, file: string): void {
   if (!Array.isArray(scenario.checks) || !scenario.checks.length) {
     throw new Error(`${file}: at least one check is required`);
   }
+  if (scenario.fact && !scenario.fact.includes("{{random}}")) {
+    throw new Error(`${file}: fact must contain {{random}}, or the answer is static on disk`);
+  }
+  if (!scenario.fact && JSON.stringify(scenario).includes("{{FACT}}")) {
+    throw new Error(`${file}: uses {{FACT}} but has no fact template`);
+  }
+  if (scenario.probePrompt.includes("{{FACT}}")) {
+    throw new Error(`${file}: probePrompt must not contain {{FACT}}; the probe would be told the answer`);
+  }
   if (provenance === "harvested") {
     if (!scenario.harvestedFrom?.date || !scenario.harvestedFrom?.session) {
       throw new Error(`${file}: harvested pairs need harvestedFrom { date, session }`);
@@ -205,6 +238,8 @@ function assertNoLeak(scenario: Scenario): void {
   const literals = scenario.repoMustNotContain ?? [];
   const probe = scenario.probePrompt.toLowerCase();
   for (const literal of literals) {
+    // A template is checked after it is materialized for a pair.
+    if (literal.includes("{{FACT}}")) continue;
     if (probe.includes(literal.toLowerCase())) {
       throw new Error(`${scenario.id}: repoMustNotContain "${literal}" appears in the probe prompt`);
     }
@@ -217,6 +252,30 @@ function assertNoLeak(scenario: Scenario): void {
       }
     }
   }
+}
+
+function substitute<T>(value: T, fact: string): T {
+  if (typeof value === "string") return value.replaceAll("{{FACT}}", fact) as T;
+  if (Array.isArray(value)) return value.map((v) => substitute(v, fact)) as T;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = substitute(v, fact);
+    return out as T;
+  }
+  return value;
+}
+
+/**
+ * A pair gets its own random fact. Never reuse a scenario object across pairs:
+ * one repeat's answer must not be the next one's.
+ */
+function materialize(template: Scenario): { scenario: Scenario; fact: string | null } {
+  if (!template.fact) return { scenario: template, fact: null };
+  const fact = template.fact.replaceAll("{{random}}", randomBytes(4).toString("hex"));
+  const scenario = substitute(template, fact);
+  // The template's own `fact` is now a rendered value; do not substitute it again.
+  scenario.fact = fact;
+  return { scenario, fact };
 }
 
 function sandboxFor(scenario: Scenario): Sandbox {
@@ -269,14 +328,50 @@ function usesLethe(condition: Condition): boolean {
   return condition === "lethe" || condition === "both";
 }
 
+function usesAutoMemory(condition: Condition): boolean {
+  return condition === "auto" || condition === "both";
+}
+
 function envFor(agent: Agent, s: Sandbox, scenario: Scenario, condition: Condition, phase: Phase): NodeJS.ProcessEnv {
+  // `$HOME` is the sandbox too. Without this, a probe can read the operator's
+  // real ~/.lethe, shell history or projects; with it, `~` means nothing useful.
+  const agentHome = join(s.base, `agent-home-${phase}`);
+  mkdirSync(agentHome, { recursive: true });
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    HOME: agentHome,
     LETHE_HOME: s.home,
-    CLAUDE_CONFIG_DIR: s.config,
     LETHE_TELEMETRY: "0",
     DO_NOT_TRACK: "1",
   };
+  // The harness is started by `npm run` from this repository, so the inherited
+  // environment names it. A probe that reads PWD or npm_config_local_prefix can
+  // walk straight to the scenarios. The sandbox path is the only one it needs.
+  for (const key of Object.keys(env)) {
+    if (/^npm_/i.test(key)) delete env[key];
+  }
+  for (const key of [
+    "INIT_CWD",
+    "OLDPWD",
+    "NODE_PATH",
+    "NODE_OPTIONS",
+    "ZDOTDIR",
+    "BASH_ENV",
+    "ENV",
+    "CDPATH",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "_",
+  ]) {
+    delete env[key];
+  }
+  if (env.PATH) {
+    env.PATH = env.PATH.split(":")
+      .filter((p) => p && !resolve(p).startsWith(repoRoot))
+      .join(":");
+  }
+  env.PWD = s.repo;
+  env.OLDPWD = s.repo;
   // The mock needs the answer to act. A real agent must never see it, or the
   // probe can read the answer out of its own environment and the run is void.
   if (agent === "mock") {
@@ -287,8 +382,29 @@ function envFor(agent: Agent, s: Sandbox, scenario: Scenario, condition: Conditi
     env.LETHE_EVAL_ANSWER = scenario.seedAnswer ?? "";
     env.LETHE_CLI = distCli;
   }
-  if (condition === "lethe" || condition === "cold") env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
-  else delete env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+  if (agent === "claude") {
+    env.CLAUDE_CONFIG_DIR = s.config;
+    if (condition === "lethe" || condition === "cold") env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
+    else delete env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+  }
+  if (agent === "opencode") {
+    // Per phase, so the probe cannot read the seed's session out of opencode's
+    // own database. lethe's memory is LETHE_HOME, which both phases share.
+    const oc = join(s.base, `opencode-${phase}`);
+    for (const dir of ["data", "config", "cache"]) mkdirSync(join(oc, dir), { recursive: true });
+    env.XDG_DATA_HOME = join(oc, "data");
+    env.XDG_CONFIG_HOME = join(oc, "config");
+    env.XDG_CACHE_HOME = join(oc, "cache");
+    // No project config, no global config, no plugins or skills from the
+    // operator's machine: only the MCP server this harness injects.
+    env.OPENCODE_DISABLE_PROJECT_CONFIG = "1";
+    env.OPENCODE_PURE = "1";
+    env.OPENCODE_DISABLE_EXTERNAL_SKILLS = "1";
+    env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = "1";
+    env.OPENCODE_CONFIG_CONTENT = opencodeConfig(s, condition);
+    delete env.CLAUDE_CONFIG_DIR;
+    delete env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+  }
   return env;
 }
 
@@ -302,6 +418,19 @@ function mcpConfig(s: Sandbox): string {
       },
     },
   });
+}
+
+function opencodeConfig(s: Sandbox, condition: Condition): string {
+  const mcp: Record<string, unknown> = {};
+  if (usesLethe(condition)) {
+    mcp.lethe = {
+      type: "local",
+      command: [process.execPath, distCli, "mcp"],
+      enabled: true,
+      environment: { LETHE_HOME: s.home, LETHE_TELEMETRY: "0" },
+    };
+  }
+  return JSON.stringify({ $schema: "https://opencode.ai/config.json", mcp });
 }
 
 const ALLOWED = [
@@ -328,6 +457,9 @@ function argvFor(
   model: string,
 ): string[] {
   if (agent === "mock") return [join(here, "mock-agent.mjs"), prompt];
+  if (agent === "opencode") {
+    return ["run", "--dir", s.repo, "--format", "json", "--model", model, "--auto", "--pure", prompt];
+  }
   const argv = [
     "-p",
     prompt,
@@ -350,18 +482,32 @@ function argvFor(
 }
 
 /** The version is part of the result: a run is only comparable to the same build. */
-function claudeVersion(): string | null {
-  const r = spawnSync("claude", ["--version"], { encoding: "utf8" });
+function agentVersion(agent: Agent): string | null {
+  if (agent === "mock") return null;
+  const bin = agent === "opencode" ? "opencode" : "claude";
+  const r = spawnSync(bin, ["--version"], { encoding: "utf8" });
   return r.status === 0 ? (r.stdout ?? "").trim() || null : null;
 }
 
 /** Claude Code's stream-json ends with one `result` event carrying the totals. */
 function parseSession(stdout: string): Session | null {
   let last: Record<string, unknown> | null = null;
+  const tools: string[] = [];
+  const toolCalls: { tool: string; input?: unknown }[] = [];
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
     try {
       const event = JSON.parse(line) as Record<string, unknown>;
+      if (event.type === "assistant") {
+        const message = (event.message ?? {}) as Record<string, unknown>;
+        const content = Array.isArray(message.content) ? message.content : [];
+        for (const block of content as Record<string, unknown>[]) {
+          if (block.type === "tool_use" && typeof block.name === "string") {
+            tools.push(block.name);
+            toolCalls.push({ tool: block.name, input: block.input });
+          }
+        }
+      }
       if (event.type === "result") last = event;
     } catch {
       /* not JSON: Claude sometimes writes a warning to stdout */
@@ -382,6 +528,8 @@ function parseSession(stdout: string): Session | null {
     denied: Array.isArray(last.permission_denials)
       ? [...new Set((last.permission_denials as { tool_name?: string }[]).map((d) => String(d.tool_name)))]
       : [],
+    tools,
+    toolCalls,
   };
 }
 
@@ -393,12 +541,66 @@ const FATAL: [RegExp, string][] = [
   [/credit balance is too low/i, "API credit is exhausted"],
   [/invalid x-api-key|invalid api key|"api_error_status":401/i, "the API key was rejected"],
   [/not logged in/i, "the session is not authenticated"],
+  [/rate.?limit|too many requests|quota|insufficient_quota/i, "the model provider refused the request (rate limit or quota)"],
+  [/unauthorized|\b401\b/i, "the model provider rejected the credential"],
   [/(5-hour|weekly|usage) limit|limit reached|hit your .*limit/i, "the subscription usage limit was reached"],
 ];
 
 function fatalFrom(text: string): string | null {
   for (const [pattern, reason] of FATAL) if (pattern.test(text)) return reason;
   return null;
+}
+
+/**
+ * opencode's `--format json` is one event per line. A `step_finish` carries the
+ * token and cost totals for one model call, so the number of those events is
+ * the turn count; text and tool events are for diagnosis.
+ */
+function parseOpencodeSession(stdout: string): Session | null {
+  let turns = 0;
+  let tokens = 0;
+  let outputTokens = 0;
+  let costUsd = 0;
+  const texts: string[] = [];
+  const tools: string[] = [];
+  const toolCalls: { tool: string; input?: unknown }[] = [];
+  const errors: string[] = [];
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const part = (event.part ?? {}) as Record<string, unknown>;
+    if (event.type === "step_finish") {
+      turns += 1;
+      const counts = (part.tokens ?? {}) as Record<string, unknown>;
+      tokens += typeof counts.total === "number" ? counts.total : 0;
+      outputTokens += typeof counts.output === "number" ? counts.output : 0;
+      costUsd += typeof part.cost === "number" ? part.cost : 0;
+    } else if (event.type === "text" && typeof part.text === "string") {
+      texts.push(part.text);
+    } else if (event.type === "tool_use" && typeof part.tool === "string") {
+      tools.push(part.tool);
+      const state = (part.state ?? {}) as Record<string, unknown>;
+      toolCalls.push({ tool: part.tool, input: state.input });
+    } else if (event.type === "error") {
+      errors.push(JSON.stringify(event).slice(0, 300));
+    }
+  }
+  if (turns === 0) return null;
+  return {
+    turns,
+    tokens,
+    outputTokens,
+    costUsd,
+    text: [...texts, ...errors].join("\n"),
+    denied: [],
+    tools,
+    toolCalls,
+  };
 }
 
 function runSession(
@@ -412,7 +614,11 @@ function runSession(
   budget: string,
   model: string,
 ): { session?: Session; error?: string; fatal?: string } {
-  const r = spawnSync(agent === "mock" ? process.execPath : "claude", argvFor(agent, prompt, condition, s, budget, model), {
+  const bin = agent === "mock" ? process.execPath : agent === "opencode" ? "opencode" : "claude";
+  // The eval measures memory, not whether an agent can find the harness on the
+  // host. State the boundary; outsideSandbox enforces it after the fact.
+  const guarded = `Work only inside the current repository. Do not read or search outside it.\n\n${prompt}`;
+  const r = spawnSync(bin, argvFor(agent, guarded, condition, s, budget, model), {
     cwd: s.repo,
     env: envFor(agent, s, scenario, condition, phase),
     encoding: "utf8",
@@ -430,7 +636,7 @@ function runSession(
       fatal: fatalFrom(output) ?? undefined,
     };
   }
-  const session = parseSession(r.stdout ?? "");
+  const session = agent === "opencode" ? parseOpencodeSession(r.stdout ?? "") : parseSession(r.stdout ?? "");
   if (!session) {
     const tail = (r.stdout ?? "").trim().split("\n").slice(-2).join(" | ");
     return { error: `${phase}: no result event${tail ? ` (${tail})` : ""}`, fatal: fatalFrom(output) ?? undefined };
@@ -474,6 +680,30 @@ function grade(scenario: Scenario, s: Sandbox, env: NodeJS.ProcessEnv): CheckRes
       detail: ok ? "ok" : `exit ${r.status}: ${(r.stderr ?? "").trim().slice(-200)}`,
     };
   });
+}
+
+/**
+ * A probe that searches the operator's home, the harness or an old result can
+ * find the answer without any memory. The fact is randomized so a grep finds
+ * nothing current, but an out-of-sandbox read is still not a fair run: mark it
+ * and stop, rather than publish a number produced by an escape.
+ */
+function outsideSandbox(session: Session | undefined, s: Sandbox): string | null {
+  const base = resolve(s.base);
+  for (const call of session?.toolCalls ?? []) {
+    const input = (call.input ?? {}) as Record<string, unknown>;
+    for (const key of ["filePath", "file_path", "path", "command", "workdir", "cwd"]) {
+      const value = input[key];
+      if (typeof value !== "string") continue;
+      const rest = value.split(base).join("SANDBOX");
+      const outside =
+        /(?:^|[\s"'`=])(?:\/Users\/|\/home\/|\/root\/)/.test(rest) ||
+        /(?:^|[\s"'`=])\/(?:\s|$)/.test(rest) ||
+        /(?:^|[\s"'`=])\.\.\/\.\./.test(rest);
+      if (outside) return `${call.tool} ${key}: ${value.slice(0, 200)}`;
+    }
+  }
+  return null;
 }
 
 function median(xs: number[]): number {
@@ -544,19 +774,28 @@ async function main(): Promise<void> {
   const scenarios = loadScenarios();
   if (process.argv.includes("--validate")) {
     console.log("scenarios (validated; no model is run)");
-    for (const s of scenarios) {
-      const provenance = s.provenance ?? "synthetic";
-      const from = s.harvestedFrom ? ` · ${s.harvestedFrom.date} ${s.harvestedFrom.session}` : "";
+    for (const template of scenarios) {
+      const provenance = template.provenance ?? "synthetic";
+      const from = template.harvestedFrom ? ` · ${template.harvestedFrom.date} ${template.harvestedFrom.session}` : "";
+      const sample = materialize(template);
+      assertNoLeak(sample.scenario);
+      const fact = template.fact ? " · random fact per pair" : "";
       console.log(
-        `  ${s.id.padEnd(24)} ${provenance.padEnd(10)} ${s.checks.length} check(s), ` +
-          `${s.repoMustNotContain?.length ?? 0} leak guard(s)${from}`,
+        `  ${template.id.padEnd(24)} ${provenance.padEnd(10)} ${template.checks.length} check(s), ` +
+          `${template.repoMustNotContain?.length ?? 0} leak guard(s)${from}${fact}`,
       );
     }
     console.log("\n  all scenarios are valid and leak-free.");
     return;
   }
   const agent = arg("agent", "claude") as Agent;
-  if (agent !== "claude" && agent !== "mock") throw new Error(`unknown --agent=${agent}`);
+  if (agent !== "claude" && agent !== "opencode" && agent !== "mock") {
+    throw new Error(`unknown --agent=${agent}`);
+  }
+  const model = arg("model", "");
+  if (agent === "opencode" && !model) {
+    throw new Error("--agent=opencode needs an explicit --model=provider/model so the run names its model.");
+  }
   const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
   const hasOauthToken = Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
   if (agent === "claude" && !hasApiKey && !hasOauthToken) {
@@ -564,25 +803,34 @@ async function main(): Promise<void> {
       "no model credential: a fresh CLAUDE_CONFIG_DIR has no login, so the run would fail 24 times.\n" +
         "Set ANTHROPIC_API_KEY for a Console key, or CLAUDE_CODE_OAUTH_TOKEN for a subscription\n" +
         "token from `claude setup-token`. They are not interchangeable.",
-
     );
   }
-  if (hasApiKey && hasOauthToken) {
+  if (agent === "claude" && hasApiKey && hasOauthToken) {
     console.log("both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are set; the API key wins.");
     console.log("Unset the one you do not mean to use.");
   }
-  const conditions = (arg("conditions", DEFAULT_CONDITIONS.join(",")).split(",") as Condition[]).filter((c) =>
+  // opencode has no automatic cross-session memory, so `auto` and `both` would
+  // be the same as `cold` and `lethe`. Refuse them rather than mislabel a run.
+  const defaultConditions = agent === "opencode" ? ["cold", "lethe"] : DEFAULT_CONDITIONS;
+  const conditions = (arg("conditions", defaultConditions.join(",")).split(",") as Condition[]).filter((c) =>
     CONDITIONS.includes(c),
   );
   if (!conditions.length) throw new Error("no valid conditions");
+  if (agent === "opencode") {
+    const unsupported = conditions.filter((c) => c === "auto" || c === "both");
+    if (unsupported.length) {
+      throw new Error(
+        `opencode has no Claude auto memory: use --conditions=cold,lethe (got ${unsupported.join(",")}).`,
+      );
+    }
+  }
   const repeats = intArg("repeats", 5);
   const timeoutMs = intArg("timeout-ms", 600_000);
   const budget = arg("budget", "1.00");
   const totalBudgetRaw = Number(arg("total-budget", "0"));
   const totalBudget = Number.isFinite(totalBudgetRaw) && totalBudgetRaw > 0 ? totalBudgetRaw : 0;
-  const model = arg("model", "");
   const keep = process.argv.includes("--keep");
-  const version = agent === "claude" ? claudeVersion() : null;
+  const version = agentVersion(agent);
 
   if (!existsSync(distCli)) throw new Error("dist/cli.js is missing: run `npm run build` first");
 
@@ -602,31 +850,54 @@ async function main(): Promise<void> {
   if (agent === "claude") {
     console.log(`claude ${version ?? "(version unknown)"}${model ? `, model ${model}` : ", account default model"}`);
     console.log(`auth: ${hasApiKey ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN"}`);
+    console.log("auto memory, lethe and the operator's settings are isolated per run.");
+  } else if (agent === "opencode") {
+    console.log(`opencode ${version ?? "(version unknown)"}, model ${model}`);
+    console.log("project config, global config, plugins and the operator's sessions are isolated per run.");
   }
-  console.log("auto memory, lethe and the operator's settings are isolated per run.");
   if (totalBudget) console.log(`total budget: $${totalBudget.toFixed(2)}; the run stops when it is reached.`);
 
   const planned = scenarios.length * conditions.length * repeats;
   const records: Run[] = [];
   let aborted: string | null = null;
-  outer: for (const scenario of scenarios) {
+  outer: for (const template of scenarios) {
     for (const condition of conditions) {
       for (let repeat = 1; repeat <= repeats; repeat++) {
+        const { scenario, fact } = materialize(template);
         const s = sandboxFor(scenario);
         const record: Run = { scenario: scenario.id, condition, repeat, solved: false, checks: [] };
+        if (fact) record.fact = fact;
         let fatal: string | undefined;
         try {
           const seed = runSession(agent, scenario.seedPrompt, condition, scenario, s, "seed", timeoutMs, budget, model);
           record.seed = seed.session;
           fatal = seed.fatal;
+          const seedOutside = outsideSandbox(seed.session, s);
           if (seed.error) record.error = seed.error;
-          else {
+          else if (seedOutside) {
+            record.error = `out-of-sandbox access: ${seedOutside}`;
+            fatal = "out-of-sandbox access";
+          } else {
+            // The seed's session is in this directory; the probe must not be
+            // able to read the prompt, which contains the answer.
+            if (agent === "opencode") rmSync(join(s.base, "opencode-seed"), { recursive: true, force: true });
+            rmSync(join(s.base, "agent-home-seed"), { recursive: true, force: true });
+            // Auto memory is the thing `auto` and `both` measure, so it stays.
+            // For the other conditions the seed's config is only a transcript.
+            if (agent === "claude" && !usesAutoMemory(condition)) {
+              rmSync(s.config, { recursive: true, force: true });
+              mkdirSync(s.config, { recursive: true });
+            }
             resetRepo(s, scenario, condition);
             const probe = runSession(agent, scenario.probePrompt, condition, scenario, s, "probe", timeoutMs, budget, model);
             record.probe = probe.session;
             fatal = probe.fatal ?? fatal;
+            const probeOutside = outsideSandbox(probe.session, s);
             if (probe.error) record.error = probe.error;
-            else {
+            else if (probeOutside) {
+              record.error = `out-of-sandbox access: ${probeOutside}`;
+              fatal = "out-of-sandbox access";
+            } else {
               if (!usesLethe(condition)) assertNoLetheStore(s);
               record.checks = grade(scenario, s, envFor(agent, s, scenario, condition, "probe"));
               record.solved = record.checks.every((c) => c.ok);
@@ -663,7 +934,8 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         agent,
-        claudeVersion: version,
+        agentVersion: version,
+        claudeVersion: agent === "claude" ? version : null,
         model: model || null,
         conditions,
         repeats,
@@ -673,6 +945,7 @@ async function main(): Promise<void> {
           category: s.category,
           provenance: s.provenance ?? "synthetic",
           harvestedFrom: s.harvestedFrom ?? null,
+          factTemplate: s.fact ?? null,
           prompts: { seed: s.seedPrompt, probe: s.probePrompt },
         })),
         // Raw records, not just the table: docs/evals.md promises the runs.
@@ -690,6 +963,9 @@ async function main(): Promise<void> {
     } else if (/denied/.test(aborted)) {
       console.log("  Managed settings with allowManagedPermissionRulesOnly ignore --allowedTools, so an");
       console.log("  unattended session cannot use them. Run the eval where that policy does not apply.");
+    } else if (/out-of-sandbox/.test(aborted)) {
+      console.log("  The agent read outside the sandbox, so this run measures the host, not memory. It is invalid.");
+      console.log("  Run the eval in a clean container, or keep every fact randomized and never paste one on disk.");
     } else if (/limit/i.test(aborted)) {
       console.log("  Wait for the 5-hour or weekly reset, or switch to API credit, then retry.");
     } else {
