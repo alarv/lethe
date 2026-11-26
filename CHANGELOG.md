@@ -13,6 +13,9 @@ The release workflow refuses to publish a version with no section here.
 
 ### Added
 
+- **The site deploys itself.** `.github/workflows/pages.yml` publishes `site/` to GitHub
+  Pages on every change, so the canonical and Open Graph URLs are stable instead of a
+  `SITE_URL` placeholder waiting for a manual deploy.
 - **The agent eval runs on opencode too (`--agent=opencode`).** The Claude path needs API
   credit, and a credit failure is not a reason the mechanism cannot be checked. opencode has
   no automatic cross-session memory, so the harness accepts only `cold,lethe` there and says
